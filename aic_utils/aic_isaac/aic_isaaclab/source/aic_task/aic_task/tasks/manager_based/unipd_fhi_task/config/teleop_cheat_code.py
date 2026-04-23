@@ -31,8 +31,9 @@ from isaaclab_tasks.utils import parse_env_cfg
 from isaaclab.utils import configclass
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers.scene_entity_cfg import SceneEntityCfg
-from isaaclab.envs.mdp import DifferentialInverseKinematicsActionCfg
-from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
+from isaaclab.actuators import IdealPDActuatorCfg
+from isaaclab.envs.mdp import OperationalSpaceControllerActionCfg
+from isaaclab.controllers.operational_space_cfg import OperationalSpaceControllerCfg
 from isaaclab.devices.keyboard import Se3Keyboard, Se3KeyboardCfg
 from aic_task.tasks.manager_based.unipd_fhi_task import mdp
 
@@ -50,17 +51,52 @@ class TeleopTaskCfg(AICTaskBaseEnv):
     def __post_init__(self) -> None:
         super().__post_init__()
 
-        # Action configuration with TCP offset
-        self.actions.arm_action = DifferentialInverseKinematicsActionCfg(
+        self.actions.arm_action = OperationalSpaceControllerActionCfg(
             asset_name="robot",
-            joint_names=["shoulder.*", "elbow.*", "wrist.*"],
+            joint_names=[
+                "shoulder_pan_joint",
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+            ],
             body_name="sfp_tip_link",
-            controller=DifferentialIKControllerCfg(
-                command_type="pose",
-                use_relative_mode=False,
-                ik_method="dls",
-            ),            
-            scale=1.0,
+            body_offset=None,
+            controller_cfg=OperationalSpaceControllerCfg(
+                target_types=["pose_abs"],
+                impedance_mode="fixed",
+                motion_control_axes_task=(1, 1, 1, 1, 1, 1),
+                contact_wrench_control_axes_task=(0, 0, 0, 0, 0, 0),
+                inertial_dynamics_decoupling=True,
+                partial_inertial_dynamics_decoupling=False,
+                gravity_compensation=True,
+              
+                # Kp
+                motion_stiffness_task=(1500.0, 1500.0, 1500.0, 150.0, 150.0, 150.0),
+
+                # choose zeta so that d = 2*sqrt(Kp)*zeta
+                motion_damping_ratio_task=(0.5, 0.5, 0.5, 0.25, 0.25, 0.25),
+            ),
+            position_scale=1.0,
+            orientation_scale=1.0,
+        )
+
+        # replace implicit actuators with explicit torque actuators
+        self.scene.robot.actuators["arm"] = IdealPDActuatorCfg(
+            joint_names_expr=[
+                "shoulder_pan_joint",
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+            ],
+            stiffness=0.0,
+            damping=0.0,
+            effort_limit=187.0,
+            effort_limit_sim=187.0,
+            velocity_limit_sim=100.0,
         )
 
         # Disable episode timeout for teleop validation

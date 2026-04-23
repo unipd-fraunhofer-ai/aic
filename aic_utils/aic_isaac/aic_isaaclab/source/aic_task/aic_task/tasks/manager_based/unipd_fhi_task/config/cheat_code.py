@@ -31,9 +31,11 @@ from isaaclab_tasks.utils import parse_env_cfg
 from isaaclab.utils import configclass
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers.scene_entity_cfg import SceneEntityCfg
-from isaaclab.envs.mdp import DifferentialInverseKinematicsActionCfg
-from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
+from isaaclab.actuators import IdealPDActuatorCfg
+from isaaclab.envs.mdp import OperationalSpaceControllerActionCfg
+from isaaclab.controllers.operational_space_cfg import OperationalSpaceControllerCfg
 from aic_task.tasks.manager_based.unipd_fhi_task import mdp
+
 
 # Import the base task environment
 from aic_task.tasks.manager_based.unipd_fhi_task.aic_task_base_env import AICTaskBaseEnv
@@ -49,16 +51,52 @@ class CheatCodeTaskCfg(AICTaskBaseEnv):
     def __post_init__(self) -> None:
         super().__post_init__()
 
-        self.actions.arm_action = DifferentialInverseKinematicsActionCfg(
+        self.actions.arm_action = OperationalSpaceControllerActionCfg(
             asset_name="robot",
-            joint_names=["shoulder.*", "elbow.*", "wrist.*"],
+            joint_names=[
+                "shoulder_pan_joint",
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+            ],
             body_name="sfp_tip_link",
-            controller=DifferentialIKControllerCfg(
-                command_type="pose",
-                use_relative_mode=False,
-                ik_method="dls",
-            ),            
-            scale=1.0,
+            body_offset=None,
+            controller_cfg=OperationalSpaceControllerCfg(
+                target_types=["pose_abs"],
+                impedance_mode="fixed",
+                motion_control_axes_task=(1, 1, 1, 1, 1, 1),
+                contact_wrench_control_axes_task=(0, 0, 0, 0, 0, 0),
+                inertial_dynamics_decoupling=True,
+                partial_inertial_dynamics_decoupling=False,
+                gravity_compensation=True,
+              
+                # Kp
+                motion_stiffness_task=(1500.0, 1500.0, 1500.0, 150.0, 150.0, 150.0),
+
+                # choose zeta so that d = 2*sqrt(Kp)*zeta
+                motion_damping_ratio_task=(0.5, 0.5, 0.5, 0.25, 0.25, 0.25),
+            ),
+            position_scale=1.0,
+            orientation_scale=1.0,
+        )
+
+        # replace implicit actuators with explicit torque actuators
+        self.scene.robot.actuators["arm"] = IdealPDActuatorCfg(
+            joint_names_expr=[
+                "shoulder_pan_joint",
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+            ],
+            stiffness=0.0,
+            damping=0.0,
+            effort_limit=187.0,
+            effort_limit_sim=187.0,
+            velocity_limit_sim=100.0,
         )
 
         # Disable episode timeout
@@ -97,7 +135,6 @@ gym.register(
 ##
 
 class CheatCode:
-    """Refactored Heuristic policy for Peg-in-Hole task."""
 
     def __init__(self, env: ManagerBasedRLEnv):
         self.env = env
@@ -124,29 +161,6 @@ class CheatCode:
         action = torch.cat([target_pos_b, target_quat_b], dim=-1)
         return action
 
-    def print_debug_poses(self):
-        """Prints world poses of wrist_3_link and the tip sensor."""
-
-        self.ee_body_id = self.robot.find_bodies("wrist_3_link")[0][0]
-
-        # Wrist 3 link pose
-        wrist_pos = self.robot.data.body_pos_w[:, self.ee_body_id]
-        wrist_quat = self.robot.data.body_quat_w[:, self.ee_body_id]
-        
-        # Tip sensor pose
-        tip_pos = self.tip_sensor.data.target_pos_w[:, 0]
-        tip_quat = self.tip_sensor.data.target_quat_w[:, 0]
-
-        # Tip relative to wrist
-        tip_pos_b, tip_quat_b = math_utils.subtract_frame_transforms(
-            wrist_pos,
-            wrist_quat,
-            tip_pos,
-            tip_quat,
-        )
-        print(f"--- [POSE DEBUG] ---")
-        print(f"  Tip (Body):     pos={tip_pos_b[0].cpu().numpy()}, quat={tip_quat_b[0].cpu().numpy()}")
-
     def run(self):
         """Executes the two-phase insertion sequence."""
         self.env.reset()
@@ -164,7 +178,7 @@ class CheatCode:
         target_pos_w = port_pos.clone()
         target_pos_w[:, 2] += z_offset
         action = self.get_action(target_pos_w, port_quat)
-        for i in range(75):
+        for i in range(100):
             obs, _, _, _, _ = self.env.step(action)
         
         # Compute errors
@@ -182,7 +196,7 @@ class CheatCode:
             obs, _, _, _, _ = self.env.step(action)
 
         # Move to insertion position
-        while z_offset > -0.005:
+        while z_offset >= 0.0:
             z_offset -= 0.0005
             
             target_pos_w = port_pos.clone()

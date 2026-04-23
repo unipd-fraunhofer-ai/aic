@@ -6,8 +6,7 @@ from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 
 @configclass
 class RelCartesianDiffIKNoRefEnvCfg(AICTaskBaseEnv):
-    """Environment for relative cartesian differential inverse kinematics joint control w.r.t. wrist frame"""
-
+    """Relative Cartesian control using Differential Inverse Kinematics w.r.t. the current EE pose."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -15,7 +14,7 @@ class RelCartesianDiffIKNoRefEnvCfg(AICTaskBaseEnv):
         self.actions.arm_action = DifferentialInverseKinematicsActionCfg(
             asset_name="robot",
             joint_names=["shoulder.*", "elbow.*", "wrist.*"],
-            body_name="wrist_3_link",
+            body_name="gripper_tcp",
             controller=DifferentialIKControllerCfg(
                 command_type="pose",
                 use_relative_mode=True,
