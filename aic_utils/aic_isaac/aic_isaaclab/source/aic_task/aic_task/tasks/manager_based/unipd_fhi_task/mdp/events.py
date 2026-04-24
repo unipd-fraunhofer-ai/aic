@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 import math
 import random
 from typing import TYPE_CHECKING
 
 import torch
+import omni.usd
+from pxr import Gf, Sdf, UsdGeom, UsdLux
 
 import isaaclab.utils.math as math_utils
 from isaaclab.managers import SceneEntityCfg
@@ -13,6 +16,9 @@ from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
+
+# Matches the regex form Isaac Lab uses to instantiate per-env prim paths.
+_ENV_REGEX_RE = re.compile(r"env_(?:\.\*|\[\^/\]\*)")
 
 
 def _sample_axis(pose_range: dict, snap_step: dict, axis: str) -> float:
@@ -27,6 +33,46 @@ def _sample_axis(pose_range: dict, snap_step: dict, axis: str) -> float:
         return n * step
     return torch.empty(1).uniform_(lo, hi).item()
 
+def _write_usd_xform_pose(
+    stage,
+    prim_path_template: str,
+    env_ids: torch.Tensor,
+    env_origins: torch.Tensor,
+    world_pos: torch.Tensor,
+    world_rot: torch.Tensor,
+) -> None:
+    """Mirror a per-env rigid body pose onto its USD Xform.
+
+    The prim translate is authored relative to its env root, so the world
+    position is converted to env-local coordinates before writing.
+    """
+    ids = env_ids.tolist()
+    local_pos = (world_pos - env_origins).tolist()
+    rot = world_rot.tolist()
+
+    for i, env_id in enumerate(ids):
+        prim_path = _ENV_REGEX_RE.sub(f"env_{env_id}", prim_path_template)
+        prim = stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            continue
+
+        xf = UsdGeom.Xformable(prim)
+        tx, ty, tz = local_pos[i]
+        qw, qx, qy, qz = rot[i]
+
+        for op in xf.GetOrderedXformOps():
+            name = op.GetOpName()
+            if "translate" in name:
+                if op.GetTypeName() == Sdf.ValueTypeNames.Float3:
+                    op.Set(Gf.Vec3f(tx, ty, tz))
+                else:
+                    op.Set(Gf.Vec3d(tx, ty, tz))
+            elif "orient" in name:
+                if op.GetTypeName() == Sdf.ValueTypeNames.Quatf:
+                    op.Set(Gf.Quatf(qw, qx, qy, qz))
+                else:
+                    op.Set(Gf.Quatd(qw, qx, qy, qz))
+
 
 class reset_board_and_robot(ManagerTermBase ):
     """Reset and randomize the task board + parts and place the robot above it using IK."""
@@ -39,19 +85,32 @@ class reset_board_and_robot(ManagerTermBase ):
         self,
         env: ManagerBasedEnv,
         env_ids: torch.Tensor,
-        robot_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="wrist_3_link"),
+        # Board and parts configuration
         board_scene_name: str = "task_board",
         board_default_pos: tuple = (0.2837, 0.229, 0.0),
         board_range: dict = {"x": (0.0, 0.0), "y": (0.0, 0.0)},
         parts: list[dict] = (),
-        ee_offset_range: dict = {"x": (-0.1, 0.1), "y": (-0.1, 0.1), "z": (0.15, 0.25)},
-        ee_tilt_range: float = 10.0,
+        sync_usd_xforms: bool = True,
+        # Robot configuration
+        robot_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="sfp_tip_link"),
+        arm_joint_names: list[str] = ["shoulder.*", "elbow.*", "wrist.*"],
+        target_ee_offset_asset_name: str = "nic_card",
+        ee_offset_range: dict = {
+            "x": (-0.02, 0.02), 
+            "y": (-0.02, 0.02), 
+            "z": (0.08, 0.11), 
+            "roll": (-10.0, 10.0),
+            "pitch": (-10.0, 10.0),
+            "yaw": (-1.0, 1.0),
+        },
     ):
         device = env.device
         n = len(env_ids)
         env_origins = env.scene.env_origins[env_ids]
+        stage = omni.usd.get_context().get_stage() if sync_usd_xforms else None
 
         # 1. Reset board and parts (logic from aic 'randomize_board_and_parts' function)
+        # - Board pose
         board_asset = env.scene[board_scene_name]
         all_names = [board_scene_name] + [p["scene_name"] for p in parts]
         if not self._cached_orientations:
@@ -71,6 +130,18 @@ class reset_board_and_robot(ManagerTermBase ):
         board_asset.write_root_pose_to_sim(board_pose, env_ids=env_ids)
         board_asset.write_root_velocity_to_sim(torch.zeros(n, 6, device=device), env_ids=env_ids)
 
+        if sync_usd_xforms:
+            _write_usd_xform_pose(
+                stage,
+                board_asset.cfg.prim_path,
+                env_ids,
+                env_origins,
+                board_world_pos,
+                board_rot,
+            )
+
+        # - Part poses, anchored to the board
+        target_pos_found = None
         for part_cfg in parts:
             pname = part_cfg["scene_name"]
             part_asset = env.scene[pname]
@@ -91,49 +162,77 @@ class reset_board_and_robot(ManagerTermBase ):
             part_asset.write_root_pose_to_sim(part_pose, env_ids=env_ids)
             part_asset.write_root_velocity_to_sim(torch.zeros(n, 6, device=device), env_ids=env_ids)
 
-        # 2. Reset Robot above the board (same logic as reset in gear assembly task)
+            if pname == target_ee_offset_asset_name:
+                target_pos_found = part_pos.clone()
+
+            if sync_usd_xforms:
+                _write_usd_xform_pose(
+                    stage,
+                    part_asset.cfg.prim_path,
+                    env_ids,
+                    env_origins,
+                    part_pos,
+                    part_rot,
+                )
+
+        # 2. Reset Robot above the board using iterative IK
         robot_cfg.resolve(env.scene)
         robot = env.scene[robot_cfg.name]
         ee_body_idx = robot_cfg.body_ids[0]
 
-        # Sample target EE pose in world frame
-        target_pos = board_world_pos.clone()
-        off_x = torch.empty(n, device=device).uniform_(*ee_offset_range.get("x", (-0.1, 0.1)))
-        off_y = torch.empty(n, device=device).uniform_(*ee_offset_range.get("y", (-0.1, 0.1)))
-        off_z = torch.empty(n, device=device).uniform_(*ee_offset_range.get("z", (0.15, 0.25)))
-        target_pos[:, 0] += off_x
-        target_pos[:, 1] += off_y
-        target_pos[:, 2] += off_z
+        arm_joint_ids, arm_joint_names_resolved = robot.find_joints(arm_joint_names)
+        arm_joint_ids = torch.as_tensor(arm_joint_ids, device=device, dtype=torch.long)
+        num_arm_joints = len(arm_joint_ids)
 
-        # Target orientation: pointing down (Z axis parallel to world Z but opposite)
-        # Nominal down: rotate 180 deg around X axis
-        nominal_quat = math_utils.quat_from_euler_xyz(
-            torch.tensor(torch.pi, device=device),
-            torch.tensor(0.0, device=device),
-            torch.tensor(0.0, device=device)
-        ).repeat(n, 1)
+        if num_arm_joints == 0:
+            raise RuntimeError(f"No arm joints found from patterns: {arm_joint_names}")
 
-        # Random tilt
-        if ee_tilt_range > 0:
-            tilt_angle = torch.empty(n, device=device).uniform_(0, math.radians(ee_tilt_range))
-            # Random horizontal axis (in X-Y plane)
-            tilt_axis_angle = torch.empty(n, device=device).uniform_(0, 2 * torch.pi)
-            tilt_axis = torch.stack([
-                torch.cos(tilt_axis_angle),
-                torch.sin(tilt_axis_angle),
-                torch.zeros(n, device=device)
-            ], dim=-1)
-            tilt_quat = math_utils.quat_from_angle_axis(tilt_angle, tilt_axis)
-            target_quat = math_utils.quat_mul(tilt_quat, nominal_quat)
+        # Target EE position
+        if target_pos_found is not None:
+            target_pos = target_pos_found.clone()
         else:
-            target_quat = nominal_quat
+            target_asset = env.scene[target_ee_offset_asset_name]
+            target_pos = target_asset.data.root_state_w[env_ids, 0:3].clone()
+
+        target_pos[:, 0] += torch.empty(n, device=device).uniform_(*ee_offset_range.get("x", (0.0, 0.0)))
+        target_pos[:, 1] += torch.empty(n, device=device).uniform_(*ee_offset_range.get("y", (0.0, 0.0)))
+        target_pos[:, 2] += torch.empty(n, device=device).uniform_(*ee_offset_range.get("z", (0.0, 0.0)))
+
+        # Target EE orientation (EE pointing down)
+        nominal_quat = torch.zeros(n, 4, device=device)
+        nominal_quat[:, 0] = 1.0
+
+        roll = torch.empty(n, device=device).uniform_(
+            math.radians(ee_offset_range.get("roll", (0.0, 0.0))[0]),
+            math.radians(ee_offset_range.get("roll", (0.0, 0.0))[1]),
+        )
+        pitch = torch.empty(n, device=device).uniform_(
+            math.radians(ee_offset_range.get("pitch", (0.0, 0.0))[0]),
+            math.radians(ee_offset_range.get("pitch", (0.0, 0.0))[1]),
+        )
+        yaw = torch.empty(n, device=device).uniform_(
+            math.radians(ee_offset_range.get("yaw", (0.0, 0.0))[0]),
+            math.radians(ee_offset_range.get("yaw", (0.0, 0.0))[1]),
+        )
+
+        rpy_offset_quat = math_utils.quat_from_euler_xyz(roll, pitch, yaw)
+        target_quat = math_utils.quat_mul(rpy_offset_quat, nominal_quat)
         
         lambda_val = 0.1
-        joint_pos_des = robot.data.default_joint_pos[env_ids].clone()
+        joint_pos_arm_des = robot.data.default_joint_pos[env_ids][:, arm_joint_ids].clone()
+        joint_vel_arm_des = torch.zeros_like(joint_pos_arm_des)
         for i in range(20):
-            # Write current guess to sim
-            robot.write_joint_state_to_sim(joint_pos_des, torch.zeros_like(joint_pos_des), env_ids=env_ids)
-            
+            # Write current guess to sim            
+            robot.write_joint_state_to_sim(
+                joint_pos_arm_des,
+                joint_vel_arm_des,
+                joint_ids=arm_joint_ids,
+                env_ids=env_ids,
+            )
+
+            env.sim.forward()
+            robot.update(0.0)
+
             # Compute pose error in world frame
             ee_pose_w = robot.data.body_link_pose_w[env_ids, ee_body_idx]
             ee_pos_w = ee_pose_w[:, :3]
@@ -156,7 +255,8 @@ class reset_board_and_robot(ManagerTermBase ):
             if torch.all(pos_err_norm <= 1e-3) and torch.all(rot_err_norm <= 1e-3):
                 break
 
-            jacobian = robot.root_physx_view.get_jacobians()[env_ids, ee_body_idx - 1, :, :]
+            full_jacobian = robot.root_physx_view.get_jacobians()[env_ids, ee_body_idx - 1, :, :]
+            jacobian = full_jacobian[:, :, arm_joint_ids]
             
             # DLS Solve: delta_q = J^T (J J^T + lambda^2 I)^-1 delta_x
             jacobian_T = torch.transpose(jacobian, 1, 2)
@@ -164,11 +264,11 @@ class reset_board_and_robot(ManagerTermBase ):
             delta_q = (jacobian_T @ torch.inverse(jacobian @ jacobian_T + lambda_matrix) @ delta_pose.unsqueeze(-1)).squeeze(-1)
             
             # Update joint positions guess
-            joint_pos_des = joint_pos_des + delta_q
+            joint_pos_arm_des = joint_pos_arm_des + delta_q
 
         # Final write to sim
-        robot.write_joint_state_to_sim(joint_pos_des, torch.zeros_like(joint_pos_des), env_ids=env_ids)
+        robot.write_joint_state_to_sim(joint_pos_arm_des, torch.zeros_like(joint_pos_arm_des), joint_ids=arm_joint_ids, env_ids=env_ids)
         # Also set targets for the next step
-        robot.set_joint_position_target(joint_pos_des, env_ids=env_ids)
-        robot.set_joint_velocity_target(torch.zeros_like(joint_pos_des), env_ids=env_ids)
+        robot.set_joint_position_target(joint_pos_arm_des, joint_ids=arm_joint_ids, env_ids=env_ids)
+        robot.set_joint_velocity_target(torch.zeros_like(joint_pos_arm_des), joint_ids=arm_joint_ids, env_ids=env_ids)
 

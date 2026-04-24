@@ -39,7 +39,7 @@ class RelCartesianOSPNoRefEnvCfg(AICTaskBaseEnv):
                 gravity_compensation=True,
               
                 # Kp
-                motion_stiffness_task=(1500.0, 1500.0, 1500.0, 150.0, 150.0, 150.0),
+                motion_stiffness_task=(1500.0, 1500.0, 1500.0, 300.0, 300.0, 300.0),
 
                 # choose zeta so that d = 2*sqrt(Kp)*zeta
                 motion_damping_ratio_task=(0.5, 0.5, 0.5, 0.25, 0.25, 0.25),

@@ -120,7 +120,7 @@ class AICTaskSceneCfg(InteractiveSceneCfg):
             ),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.2837, 0.229, 0.0),
+            pos=(0.35, -0.30, 0.0),
         ),
     )
 
@@ -133,8 +133,7 @@ class AICTaskSceneCfg(InteractiveSceneCfg):
             ),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.25135, -0.25229, 0.0743),
-            # pos=(0.25135, 0.25229, 0.0743),
+            pos=(0.31765, -0.27671, 0.0743),
             rot=(0.0, 0.0, -0.7068252, 0.7073883),
         ),
     )
@@ -196,55 +195,25 @@ class EventCfg:
         func=mdp.reset_board_and_robot,
         mode="reset",
         params={
-            "robot_cfg": SceneEntityCfg("robot", body_names="wrist_3_link"),
             "board_scene_name": "task_board",
-            "board_default_pos": (0.2837, 0.229, 0.0),
-            "board_range": {"x": (-0.15, 0.05), "y": (-0.05, 0.05)},
+            "board_default_pos": (0.35, -0.30, 0.0),
+            "board_range": {"x": (-0.05, 0.05), "y": (-0.05, 0.05)},
             "parts": [
                 {
                     "scene_name": "nic_card",
-                    "offset": (-0.03235, 0.02329, 0.102),
+                    "offset": (-0.03235, 0.02329, 0.0743),
+                    "pose_range": {"y": (0.0, 0.12)},
+                    "snap_step": {"y": 0.04},
                 },
             ],
-            "ee_offset_range": {"x": (-0.05, 0.05), "y": (-0.05, 0.05), "z": (0.50, 0.55)},
-            "ee_tilt_range": 10.0,
-        },
-    )
-
-    robot_joint_stiffness_and_damping = EventTerm(
-        func=mdp.randomize_actuator_gains,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg(
-                "robot", joint_names=["shoulder_.*", "elbow_.*", "wrist_.*"]
-            ),
-            "stiffness_distribution_params": (0.75, 1.5),
-            "damping_distribution_params": (0.3, 3.0),
-            "operation": "scale",
-            "distribution": "log_uniform",
-        },
-    )
-
-    joint_friction = EventTerm(
-        func=mdp.randomize_joint_parameters,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder_.*", "elbow_.*", "wrist_.*"]),
-            "friction_distribution_params": (0.3, 0.7),
-            "operation": "add",
-            "distribution": "uniform",
-        },
-    )
-
-    nic_card_physics_material = EventTerm(
-        func=mdp.randomize_rigid_body_material,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("nic_card", body_names=".*"),
-            "static_friction_range": (0.75, 0.75),
-            "dynamic_friction_range": (0.75, 0.75),
-            "restitution_range": (0.0, 0.0),
-            "num_buckets": 16,
+            "target_ee_offset_asset_name": "nic_card",
+            "ee_offset_range": {
+                "x": (-0.02, 0.02), 
+                "y": (-0.02, 0.02), 
+                "z": (0.08, 0.11), 
+                "roll": (-10.0, 10.0),
+                "pitch": (-10.0, 10.0),
+                "yaw": (-10.0, 10.0),},
         },
     )
 
@@ -317,8 +286,7 @@ class ObservationsCfg:
         # End-effector pose in env frame (pos xyz + quat wxyz = 7 dims)
         eef_pose = ObsTerm(
             func=mdp.body_pose_w,
-            params={"asset_cfg": SceneEntityCfg("robot", body_names="wrist_3_link")},
-            noise=Unoise(n_min=-0.001, n_max=0.001),
+            params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
         )
 
         # Body forces (wrench) at the end-effector (force xyz + torque xyz = 6 dims)
@@ -345,25 +313,25 @@ class ObservationsCfg:
 class RewardsCfg:
     """Reward terms for the MDP."""
 
-    # insertion_position_error = RewTerm(
-    #     func=mdp.insertion_position_error,
-    #     weight=1,
-    #     params={
-    #         "command_name": "sfp_port_pose_command",
-    #         "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-    #         "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-    #     },
-    # )
-    # insertion_position_error_tanh = RewTerm(
-    #     func=mdp.insertion_position_error_tanh,
-    #     weight=1,
-    #     params={
-    #         "std": 0.1,
-    #         "command_name": "sfp_port_pose_command",
-    #         "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-    #         "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-    #     },
-    # )
+    insertion_position_error = RewTerm(
+        func=mdp.insertion_position_error,
+        weight=1,
+        params={
+            "command_name": "sfp_port_pose_command",
+            "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
+            "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
+        },
+    )
+    insertion_position_error_tanh = RewTerm(
+        func=mdp.insertion_position_error_tanh,
+        weight=1,
+        params={
+            "std": 0.05,
+            "command_name": "sfp_port_pose_command",
+            "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
+            "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
+        },
+    )
 
     # insertion_orientation_error_tanh = RewTerm(
     #     func=mdp.insertion_orientation_error_tanh,
@@ -376,26 +344,26 @@ class RewardsCfg:
     #     },
     # )
 
-    insertion_pose_error = RewTerm(
-        func=mdp.pose_error,
-        weight=-1.5,
-        params={
-            "command_name": "sfp_port_pose_command",
-            "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-            "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-        },
-    )
+    # insertion_pose_error = RewTerm(
+    #     func=mdp.pose_error,
+    #     weight=-1.5,
+    #     params={
+    #         "command_name": "sfp_port_pose_command",
+    #         "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
+    #         "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
+    #     },
+    # )
 
-    insertion_pose_error_exp = RewTerm(
-        func=mdp.pose_error_exp,
-        weight=1.5,
-        params={
-            "command_name": "sfp_port_pose_command",
-            "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-            "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-            "kp_exp_coeffs": [(1.0, 0.1)],
-        },
-    )
+    # insertion_pose_error_exp = RewTerm(
+    #     func=mdp.pose_error_exp,
+    #     weight=1.5,
+    #     params={
+    #         "command_name": "sfp_port_pose_command",
+    #         "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
+    #         "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
+    #         "kp_exp_coeffs": [(1.0, 0.1)],
+    #     },
+    # )
 
     # -- Smoothness penalties --
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.001)
