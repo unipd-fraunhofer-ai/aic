@@ -21,12 +21,7 @@ class SfpPoseTargetCommand(CommandTerm):
 
     def __init__(self, cfg: SfpPoseTargetCommandCfg, env: ManagerBasedEnv):
         super().__init__(cfg, env)
-
-        print(f"env.scene: {env.scene}")
-        nic_card = env.scene["nic_card"]
-        print(f"nic_card: {nic_card.data.body_link_pose_w}")
-        print(f"nic_card: {nic_card.data.body_names}")
-        
+                
         # The sensor that tracks the port frames relative to the asset
         self.sensor = env.scene.sensors[cfg.sensor_name]
 
