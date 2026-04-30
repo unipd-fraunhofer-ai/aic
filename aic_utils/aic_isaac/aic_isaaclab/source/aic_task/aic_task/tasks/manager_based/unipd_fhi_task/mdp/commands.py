@@ -29,10 +29,14 @@ class SfpPoseTargetCommand(CommandTerm):
         self.poses_b = torch.zeros((self.num_envs, 7), device=self.device)
         self.pose_command_w = torch.zeros_like(self.poses_b)
         self.targets_idx = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self.pending_targets_idx = None
 
     def _resample_command(self, env_ids: torch.Tensor):
-        # Randomly select between port 0 (0) and port 1 (1)
-        self.targets_idx[env_ids] = torch.randint(0, 2, (len(env_ids),), device=self.device)
+        if self.pending_targets_idx is not None:
+            self.targets_idx[env_ids] = self.pending_targets_idx[env_ids]
+        else:
+            # Randomly select between port 0 (0) and port 1 (1)
+            self.targets_idx[env_ids] = torch.randint(0, 2, (len(env_ids),), device=self.device)
 
     def _update_command(self):
         # Fetch the current relative poses from the sensor

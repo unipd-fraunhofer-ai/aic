@@ -192,28 +192,11 @@ class EventCfg:
     """Configuration for events."""
 
     reset_scene = EventTerm(
-        func=mdp.reset_board_and_robot,
+        func=mdp.reset_to_near_completion,
         mode="reset",
         params={
-            "board_scene_name": "task_board",
-            "board_default_pos": (0.35, -0.30, 0.0),
-            "board_range": {"x": (-0.05, 0.05), "y": (-0.05, 0.05)},
-            "parts": [
-                {
-                    "scene_name": "nic_card",
-                    "offset": (-0.03235, 0.02329, 0.0743),
-                    "pose_range": {"y": (0.0, 0.12)},
-                    "snap_step": {"y": 0.04},
-                },
-            ],
-            "target_ee_offset_asset_name": "nic_card",
-            "ee_offset_range": {
-                "x": (-0.03, 0.03), 
-                "y": (-0.03, 0.03), 
-                "z": (0.12, 0.15), 
-                "roll": (-10.0, 10.0),
-                "pitch": (-10.0, 10.0),
-                "yaw": (-10.0, 10.0),},
+            "reset_data_filename": "near_completion_states.pt",
+            "only_success": False,
         },
     )
 
@@ -351,26 +334,26 @@ class RewardsCfg:
     #     },
     # )
 
-    # insertion_pose_error = RewTerm(
-    #     func=mdp.pose_error,
-    #     weight=-1.5,
-    #     params={
-    #         "command_name": "sfp_port_pose_command",
-    #         "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-    #         "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-    #     },
-    # )
+    insertion_pose_error = RewTerm(
+        func=mdp.pose_error,
+        weight=-1.5,
+        params={
+            "command_name": "sfp_port_pose_command",
+            "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
+            "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
+        },
+    )
 
-    # insertion_pose_error_exp = RewTerm(
-    #     func=mdp.pose_error_exp,
-    #     weight=1.5,
-    #     params={
-    #         "command_name": "sfp_port_pose_command",
-    #         "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-    #         "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-    #         "kp_exp_coeffs": [(1.0, 0.1)],
-    #     },
-    # )
+    insertion_pose_error_exp = RewTerm(
+        func=mdp.pose_error_exp,
+        weight=1.5,
+        params={
+            "command_name": "sfp_port_pose_command",
+            "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
+            "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
+            "kp_exp_coeffs": [(1.0, 0.1)],
+        },
+    )
 
     # -- Smoothness penalties --
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.001)

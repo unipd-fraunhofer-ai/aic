@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import math
 import random
@@ -272,3 +273,80 @@ class reset_board_and_robot(ManagerTermBase ):
         robot.set_joint_position_target(joint_pos_arm_des, joint_ids=arm_joint_ids, env_ids=env_ids)
         robot.set_joint_velocity_target(torch.zeros_like(joint_pos_arm_des), joint_ids=arm_joint_ids, env_ids=env_ids)
 
+
+class reset_to_near_completion(ManagerTermBase):
+    """Reset the robot and NIC card to a pre-collected 'near completion' state."""
+
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        self.data = None
+        self.success_indices = None
+        self.command_term = None
+            
+    def __call__(
+        self,
+        env: ManagerBasedEnv,
+        env_ids: torch.Tensor,
+        reset_data_filename: str,
+        robot_scene_name: str = "robot",
+        nic_card_scene_name: str = "nic_card",
+        only_success: bool = False,
+    ):
+        # Lazy load the data
+        if self.data is None:
+            try:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                data_path = os.path.join(base_dir, "..", "data", reset_data_filename)
+                self.data = torch.load(data_path, map_location=env.device)
+                print(f"[reset_to_near_completion] Loaded {self.data['num_samples']} states from {data_path}")
+                
+                if "success" in self.data:
+                    self.success_indices = torch.where(self.data["success"] > 0.5)[0]
+                    print(f"  - Found {len(self.success_indices)} successful states out of {self.data['num_samples']}")
+                else:
+                    self.success_indices = torch.arange(self.data['num_samples'], device=env.device)
+            except Exception as e:
+                raise RuntimeError(f"Failed to load data from {data_path}: {e}")
+
+        device = env.device
+        n = len(env_ids)
+        env_origins = env.scene.env_origins[env_ids]
+        
+        # Sample indices from the collected data
+        if only_success and len(self.success_indices) > 0:
+            sub_ids = torch.randint(0, len(self.success_indices), (n,), device=device)
+            sample_ids = self.success_indices[sub_ids]
+        else:
+            sample_ids = torch.randint(0, self.data["num_samples"], (n,), device=device)
+        
+        # 1. Reset Robot
+        robot = env.scene[robot_scene_name]
+        
+        # Root state (position + orientation + velocities)
+        # We assume the saved root_state is relative to env_origin (positions only)
+        robot_root_state = self.data["robot_root_state"][sample_ids].clone()
+        robot_root_state[:, :3] += env_origins
+        robot.write_root_pose_to_sim(robot_root_state[:, :7], env_ids=env_ids)
+        robot.write_root_velocity_to_sim(robot_root_state[:, 7:13], env_ids=env_ids)
+        
+        # Joint state (positions + velocities)
+        joint_pos = self.data["robot_joint_pos"][sample_ids]
+        joint_vel = self.data["robot_joint_vel"][sample_ids]
+        robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
+        
+        # Set targets for the next step (important for position/impedance control)
+        robot.set_joint_position_target(joint_pos, env_ids=env_ids)
+        robot.set_joint_velocity_target(joint_vel, env_ids=env_ids)
+
+        # 2. Reset NIC Card
+        nic_card = env.scene[nic_card_scene_name]
+        nic_root_state = self.data["nic_card_root_state"][sample_ids].clone()
+        nic_root_state[:, :3] += env_origins
+        nic_card.write_root_pose_to_sim(nic_root_state[:, :7], env_ids=env_ids)
+        nic_card.write_root_velocity_to_sim(nic_root_state[:, 7:13], env_ids=env_ids)
+
+        # 3. Enforce consistent command target
+        if self.command_term is None:
+            self.command_term = env.command_manager.get_term(self.cfg.params.get("command_name", "sfp_port_pose_command"))
+            self.command_term.pending_targets_idx = torch.zeros(env.num_envs, dtype=torch.long, device=device)
+        self.command_term.pending_targets_idx[env_ids] = self.data["target_idx"][sample_ids].to(device)
