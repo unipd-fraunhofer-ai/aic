@@ -43,6 +43,28 @@ from aic_task.tasks.manager_based.unipd_fhi_task.aic_task_base_env import AICTas
 ##
 # Task Configuration
 ##
+def reset(env, env_ids,):
+        device = env.device
+        env_origins = env.scene.env_origins[env_ids]
+        n = len(env_ids)
+
+        # Reset robot
+        robot = env.scene["robot"]
+        robot_pos = torch.tensor([0.0, 0.0, 0.0], device=device).unsqueeze(0).expand(n, -1)
+        robot_rot = torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).unsqueeze(0).expand(n, -1)
+        robot.write_root_pose_to_sim(torch.cat([robot_pos + env_origins, robot_rot], dim=-1), env_ids=env_ids)
+        robot.write_root_velocity_to_sim(torch.zeros(n, 6, device=device), env_ids=env_ids)
+
+        joint_pos = robot.data.default_joint_pos.clone()
+        joint_vel = robot.data.default_joint_vel.clone()
+        robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
+
+        # Reset NIC card
+        nic_card = env.scene["nic_card"]
+        board_pos = torch.tensor([-0.397, 0.208, 0.102], device=device).unsqueeze(0).expand(n, -1)
+        board_rot = torch.tensor([0.0, 0.0, -0.7068252, 0.7073883], device=device).unsqueeze(0).expand(n, -1)
+        nic_card.write_root_pose_to_sim(torch.cat([board_pos + env_origins, board_rot], dim=-1), env_ids=env_ids)
+        nic_card.write_root_velocity_to_sim(torch.zeros(n, 6, device=device), env_ids=env_ids)
 
 @configclass
 class CheatCodeTaskCfg(AICTaskBaseEnv):
@@ -101,20 +123,14 @@ class CheatCodeTaskCfg(AICTaskBaseEnv):
 
         # Disable episode timeout
         self.terminations.time_out = None
+        self.terminations.failed_insertion = None
 
-        # Disable randomization
-        self.events.robot_joint_stiffness_and_damping = None
-        self.events.joint_friction = None
-        self.events.nic_card_physics_material = None
+        # Delete the task board
+        self.scene.task_board = None
 
         self.events.reset_scene = EventTerm(
-            func=mdp.reset_joints_by_offset,
+            func=reset,
             mode="reset",
-            params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder.*", "elbow.*", "wrist.*"]),
-                "position_range": (0.0, 0.0),
-                "velocity_range": (0.0, 0.0),
-            },
         )
 
 ##
