@@ -44,7 +44,7 @@ class RelCartesianOSPNoRefEnvCfg(AICTaskBaseEnv):
                 # choose zeta so that d = 2*sqrt(Kp)*zeta
                 motion_damping_ratio_task=(0.5, 0.5, 0.5, 0.25, 0.25, 0.25),
             ),
-            position_scale=0.01,
+            position_scale=0.005,
             orientation_scale=0.1,
         )
 

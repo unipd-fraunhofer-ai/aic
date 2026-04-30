@@ -208,9 +208,9 @@ class EventCfg:
             ],
             "target_ee_offset_asset_name": "nic_card",
             "ee_offset_range": {
-                "x": (-0.02, 0.02), 
-                "y": (-0.02, 0.02), 
-                "z": (0.08, 0.11), 
+                "x": (-0.03, 0.03), 
+                "y": (-0.03, 0.03), 
+                "z": (0.12, 0.15), 
                 "roll": (-10.0, 10.0),
                 "pitch": (-10.0, 10.0),
                 "yaw": (-10.0, 10.0),},
@@ -237,6 +237,13 @@ class TerminationsCfg:
     """Termination terms for the MDP."""
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
+
+    failed_insertion = DoneTerm(func=mdp.failed_insertion, params={
+        "command_name": "sfp_port_pose_command",
+        "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
+        "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
+    })
+
 
 @configclass
 class ObservationsCfg:
@@ -370,24 +377,64 @@ class RewardsCfg:
     joint_vel = RewTerm(
         func=mdp.joint_vel_l2,
         weight=-0.001,
-        params={"asset_cfg": SceneEntityCfg("robot")},
+        params={"asset_cfg": SceneEntityCfg(
+            "robot", 
+                joint_names=[
+                "shoulder_pan_joint", 
+                "shoulder_lift_joint", 
+                "elbow_joint", 
+                "wrist_1_joint", 
+                "wrist_2_joint", 
+                "wrist_3_joint"
+            ]
+        )},
     )
     joint_acc = RewTerm(
         func=mdp.joint_acc_l2,
         weight=-1.0e-6,
-        params={"asset_cfg": SceneEntityCfg("robot")},
+        params={"asset_cfg": SceneEntityCfg(
+            "robot", 
+            joint_names=[
+                "shoulder_pan_joint", 
+                "shoulder_lift_joint", 
+                "elbow_joint", 
+                "wrist_1_joint", 
+                "wrist_2_joint", 
+                "wrist_3_joint"
+            ]
+        )},
     )
     joint_torques = RewTerm(
         func=mdp.joint_torques_l2,
         weight=-1.0e-6,
-        params={"asset_cfg": SceneEntityCfg("robot")},
+        params={"asset_cfg": SceneEntityCfg(
+            "robot", 
+            joint_names=[
+                "shoulder_pan_joint", 
+                "shoulder_lift_joint", 
+                "elbow_joint", 
+                "wrist_1_joint", 
+                "wrist_2_joint", 
+                "wrist_3_joint"
+            ]
+        )}
     )
 
     # -- Safety: penalize joints approaching their limits --
     joint_pos_limits = RewTerm(
         func=mdp.joint_pos_limits,
         weight=-0.1,
-        params={"asset_cfg": SceneEntityCfg("robot")},
+        params={"asset_cfg": SceneEntityCfg(
+            "robot",
+            joint_names=[
+                "shoulder_pan_joint",
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+            ],
+        )},
     )
 
 
