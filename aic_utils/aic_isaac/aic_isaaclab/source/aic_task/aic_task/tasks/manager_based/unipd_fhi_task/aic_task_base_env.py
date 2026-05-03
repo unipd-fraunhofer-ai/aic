@@ -66,7 +66,7 @@ class AICTaskSceneCfg(InteractiveSceneCfg):
             pos=(-0.18, -0.122, 0),
             rot=(0.0, 0.0, 0.0, 1.0),
             joint_pos={
-                "shoulder_pan_joint": 0.1597,
+                "shoulder_pan_joint": -0.1597,
                 "shoulder_lift_joint": -1.3542,
                 "elbow_joint": -1.6648,
                 "wrist_1_joint": -1.6933,
@@ -236,46 +236,31 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy: joint state, ee pose, pose command."""
 
-        # Robot state (joints positions + joints velocities = 12 dims)
-        joint_pos = ObsTerm(
-            func=mdp.joint_pos_rel,
-            params={
-                "asset_cfg": SceneEntityCfg(
-                    "robot",
-                    joint_names=[
-                        "shoulder_pan_joint",
-                        "shoulder_lift_joint",
-                        "elbow_joint",
-                        "wrist_1_joint",
-                        "wrist_2_joint",
-                        "wrist_3_joint",
-                    ],
-                )
-            },
+        # Target port position and orientation (3-D + 3-D = 6 dims)
+        sfp_port_pos = ObsTerm(
+            func=mdp.target_port_pos_base,
+            params={"asset_cfg": SceneEntityCfg("robot")},
         )
-        joint_vel = ObsTerm(
-            func=mdp.joint_vel_rel,
-            params={
-                "asset_cfg": SceneEntityCfg(
-                    "robot",
-                    joint_names=[
-                        "shoulder_pan_joint",
-                        "shoulder_lift_joint",
-                        "elbow_joint",
-                        "wrist_1_joint",
-                        "wrist_2_joint",
-                        "wrist_3_joint",
-                    ],
-                )
-            },
+        sfp_port_rpy = ObsTerm(
+            func=mdp.target_port_rpy_base,
+            params={"asset_cfg": SceneEntityCfg("robot")},
         )
 
-        # Pose command (pos + quat = 7 dims)
-        sfp_port_pose_command = ObsTerm(func=mdp.generated_commands, params={"command_name": "sfp_port_pose_command"})
-
-        # End-effector pose in env frame (pos xyz + quat wxyz = 7 dims)
-        eef_pose = ObsTerm(
-            func=mdp.body_pose_w,
+        # End effector position, orientation, linear velocity, angular velocity (12 dims)
+        ee_pos = ObsTerm(
+            func=mdp.ee_pos_base,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
+        )
+        ee_rpy = ObsTerm(
+            func=mdp.ee_rpy_base,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
+        )
+        ee_lin_vel = ObsTerm(
+            func=mdp.ee_lin_vel_base,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
+        )
+        ee_ang_vel = ObsTerm(
+            func=mdp.ee_ang_vel_base,
             params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
         )
 
@@ -293,7 +278,7 @@ class ObservationsCfg:
 
         def __post_init__(self):
             self.enable_corruption = False
-            self.concatenate_terms = True # Total obs dim = 12 + 7 + 7 + 6 + 6 = 38
+            self.concatenate_terms = True # Total obs dim = 6 + 12 + 6 + 6 = 30
 
     # observation groups
     policy: PolicyCfg = PolicyCfg()
