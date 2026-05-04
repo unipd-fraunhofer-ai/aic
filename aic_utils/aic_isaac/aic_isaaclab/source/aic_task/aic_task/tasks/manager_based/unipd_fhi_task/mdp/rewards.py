@@ -79,6 +79,31 @@ def insertion_position_error_tanh(
     distance = torch.norm(tip_pos_w - port_pos_w, dim=1)
     return 1.0 - torch.tanh(distance / std)
 
+def insertion_completed(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    tip_sensor_cfg: SceneEntityCfg,
+    port_sensor_cfg: SceneEntityCfg,
+    threshold: float = 0.005,
+) -> torch.Tensor:
+    """Sparse reward for completing the insertion (distance < threshold)."""
+    # Get sensors
+    tip_sensor: FrameTransformer = env.scene.sensors[tip_sensor_cfg.name]
+    port_sensor: FrameTransformer = env.scene.sensors[port_sensor_cfg.name]
+
+    # Get active target index
+    command_term = env.command_manager.get_term(command_name)
+    target_idx = command_term.targets_idx
+
+    # Get world positions
+    tip_pos_w = tip_sensor.data.target_pos_w[:, 0]
+    port_pos_w = port_sensor.data.target_pos_w[torch.arange(env.num_envs), target_idx]
+
+    # Calculate distance
+    distance = torch.norm(tip_pos_w - port_pos_w, dim=1)
+    
+    return (distance < threshold).float()
+
 
 # ---------------------------------------------------------------------------
 # Insertion-pose tracking (orientation)

@@ -60,6 +60,24 @@ def contact_net_forces(
 # ---------------------------------------------------------------------------
 # Target port pose in robot base frame
 # ---------------------------------------------------------------------------
+def target_port_base(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    command_name: str = "sfp_port_pose_command",
+) -> torch.Tensor:
+    """Minimal target port pose in robot base frame — (x,y,yaw)."""
+    robot = env.scene[asset_cfg.name]
+    command_term = env.command_manager.get_term(command_name)
+    target_pos_w = command_term.pose_command_w[:, :3]
+    target_quat_w = command_term.pose_command_w[:, 3:]
+    
+    pos_rel, quat_rel = subtract_frame_transforms(
+        robot.data.root_pos_w, robot.data.root_quat_w, target_pos_w, target_quat_w
+    )
+
+    _, _, yaw = euler_xyz_from_quat(quat_rel)
+    return torch.cat([pos_rel[:, :2], yaw.unsqueeze(-1)], dim=-1)
+
 
 def target_port_pos_base(
     env: ManagerBasedRLEnv,

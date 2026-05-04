@@ -236,13 +236,9 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy: joint state, ee pose, pose command."""
 
-        # Target port position and orientation (3-D + 3-D = 6 dims)
-        sfp_port_pos = ObsTerm(
-            func=mdp.target_port_pos_base,
-            params={"asset_cfg": SceneEntityCfg("robot")},
-        )
-        sfp_port_rpy = ObsTerm(
-            func=mdp.target_port_rpy_base,
+        # Minimal target port position and orientation (x, y, yaw = 3 dims)
+        port_target = ObsTerm(
+            func=mdp.target_port_base,
             params={"asset_cfg": SceneEntityCfg("robot")},
         )
 
@@ -278,7 +274,7 @@ class ObservationsCfg:
 
         def __post_init__(self):
             self.enable_corruption = False
-            self.concatenate_terms = True # Total obs dim = 6 + 12 + 6 + 6 = 30
+            self.concatenate_terms = True # Total obs dim = 3 + 12 + 6 + 6 = 27
 
     # observation groups
     policy: PolicyCfg = PolicyCfg()
@@ -287,6 +283,17 @@ class ObservationsCfg:
 @configclass
 class RewardsCfg:
     """Reward terms for the MDP."""
+
+    insertion_completed = RewTerm(
+        func=mdp.insertion_completed,
+        weight=10.0,
+        params={
+            "threshold": 0.005,
+            "command_name": "sfp_port_pose_command",
+            "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
+            "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
+        },
+    )
 
     insertion_position_error = RewTerm(
         func=mdp.insertion_position_error,
@@ -308,17 +315,6 @@ class RewardsCfg:
         },
     )
 
-    # insertion_orientation_error_tanh = RewTerm(
-    #     func=mdp.insertion_orientation_error_tanh,
-    #     weight=0.5,
-    #     params={
-    #         "std": 0.1,
-    #         "command_name": "sfp_port_pose_command",
-    #         "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-    #         "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-    #     },
-    # )
-
     insertion_pose_error = RewTerm(
         func=mdp.pose_error,
         weight=-1.5,
@@ -326,17 +322,6 @@ class RewardsCfg:
             "command_name": "sfp_port_pose_command",
             "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
             "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-        },
-    )
-
-    insertion_pose_error_exp = RewTerm(
-        func=mdp.pose_error_exp,
-        weight=1.5,
-        params={
-            "command_name": "sfp_port_pose_command",
-            "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-            "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-            "kp_exp_coeffs": [(1.0, 0.1)],
         },
     )
 
@@ -359,7 +344,7 @@ class RewardsCfg:
     )
     joint_acc = RewTerm(
         func=mdp.joint_acc_l2,
-        weight=-1.0e-6,
+        weight=-1.0e-5,
         params={"asset_cfg": SceneEntityCfg(
             "robot", 
             joint_names=[
@@ -386,23 +371,6 @@ class RewardsCfg:
                 "wrist_3_joint"
             ]
         )}
-    )
-
-    # -- Safety: penalize joints approaching their limits --
-    joint_pos_limits = RewTerm(
-        func=mdp.joint_pos_limits,
-        weight=-0.1,
-        params={"asset_cfg": SceneEntityCfg(
-            "robot",
-            joint_names=[
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
-        )},
     )
 
 
