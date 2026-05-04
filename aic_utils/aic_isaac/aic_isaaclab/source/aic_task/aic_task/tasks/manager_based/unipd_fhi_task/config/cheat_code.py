@@ -26,100 +26,49 @@ import numpy as np
 import gymnasium as gym
 
 import isaaclab.utils.math as math_utils
-from isaaclab.envs import ManagerBasedRLEnv
-from isaaclab_tasks.utils import parse_env_cfg
 from isaaclab.utils import configclass
 from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab.managers.scene_entity_cfg import SceneEntityCfg
-from isaaclab.actuators import IdealPDActuatorCfg
-from isaaclab.envs.mdp import OperationalSpaceControllerActionCfg
-from isaaclab.controllers.operational_space_cfg import OperationalSpaceControllerCfg
 from aic_task.tasks.manager_based.unipd_fhi_task import mdp
 
-
-# Import the base task environment
-from aic_task.tasks.manager_based.unipd_fhi_task.aic_task_base_env import AICTaskBaseEnv
+# Import the base OSP task and env
+from aic_task.tasks.manager_based.unipd_fhi_task.config.rel_cart_osp_no_ref import RelCartesianOSPNoRefEnvCfg, RelCartesianOSPEnv
 
 ##
 # Task Configuration
 ##
-def reset(env, env_ids,):
-        device = env.device
-        env_origins = env.scene.env_origins[env_ids]
-        n = len(env_ids)
 
-        # Reset robot
-        robot = env.scene["robot"]
-        robot_pos = torch.tensor([0.0, 0.0, 0.0], device=device).unsqueeze(0).expand(n, -1)
-        robot_rot = torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).unsqueeze(0).expand(n, -1)
-        robot.write_root_pose_to_sim(torch.cat([robot_pos + env_origins, robot_rot], dim=-1), env_ids=env_ids)
-        robot.write_root_velocity_to_sim(torch.zeros(n, 6, device=device), env_ids=env_ids)
+def reset(env, env_ids):
+    device = env.device
+    env_origins = env.scene.env_origins[env_ids]
+    n = len(env_ids)
 
-        joint_pos = robot.data.default_joint_pos.clone()
-        joint_vel = robot.data.default_joint_vel.clone()
-        robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
+    # Reset robot
+    robot = env.scene["robot"]
+    robot_pos = torch.tensor([0.0, 0.0, 0.0], device=device).unsqueeze(0).expand(n, -1)
+    robot_rot = torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).unsqueeze(0).expand(n, -1)
+    robot.write_root_pose_to_sim(torch.cat([robot_pos + env_origins, robot_rot], dim=-1), env_ids=env_ids)
+    robot.write_root_velocity_to_sim(torch.zeros(n, 6, device=device), env_ids=env_ids)
 
-        # Reset NIC card
-        nic_card = env.scene["nic_card"]
-        board_pos = torch.tensor([-0.397, 0.208, 0.102], device=device).unsqueeze(0).expand(n, -1)
-        board_rot = torch.tensor([0.0, 0.0, -0.7068252, 0.7073883], device=device).unsqueeze(0).expand(n, -1)
-        nic_card.write_root_pose_to_sim(torch.cat([board_pos + env_origins, board_rot], dim=-1), env_ids=env_ids)
-        nic_card.write_root_velocity_to_sim(torch.zeros(n, 6, device=device), env_ids=env_ids)
+    joint_pos = robot.data.default_joint_pos.clone()
+    joint_vel = robot.data.default_joint_vel.clone()
+    robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
+
+    # Reset NIC card
+    nic_card = env.scene["nic_card"]
+    nic_card_pos = torch.tensor([-0.397, 0.208, 0.102], device=device).unsqueeze(0).expand(n, -1)
+    nic_card_rot = torch.tensor([0.0, 0.0, -0.7068252, 0.7073883], device=device).unsqueeze(0).expand(n, -1)
+    nic_card.write_root_pose_to_sim(torch.cat([nic_card_pos + env_origins, nic_card_rot], dim=-1), env_ids=env_ids)
+    nic_card.write_root_velocity_to_sim(torch.zeros(n, 6, device=device), env_ids=env_ids)
 
 @configclass
-class CheatCodeTaskCfg(AICTaskBaseEnv):
+class CheatCodeTaskCfg(RelCartesianOSPNoRefEnvCfg):
     """Task configuration specifically for cheatcode validation."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
 
-        self.actions.arm_action = OperationalSpaceControllerActionCfg(
-            asset_name="robot",
-            joint_names=[
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
-            body_name="sfp_tip_link",
-            body_offset=None,
-            controller_cfg=OperationalSpaceControllerCfg(
-                target_types=["pose_abs"],
-                impedance_mode="fixed",
-                motion_control_axes_task=(1, 1, 1, 1, 1, 1),
-                contact_wrench_control_axes_task=(0, 0, 0, 0, 0, 0),
-                inertial_dynamics_decoupling=True,
-                partial_inertial_dynamics_decoupling=False,
-                gravity_compensation=True,
-              
-                # Kp
-                motion_stiffness_task=(1500.0, 1500.0, 1500.0, 300.0, 300.0, 300.0),
-
-                # choose zeta so that d = 2*sqrt(Kp)*zeta
-                motion_damping_ratio_task=(0.5, 0.5, 0.5, 0.25, 0.25, 0.25),
-            ),
-            position_scale=1.0,
-            orientation_scale=1.0,
-        )
-
-        # replace implicit actuators with explicit torque actuators
-        self.scene.robot.actuators["arm"] = IdealPDActuatorCfg(
-            joint_names_expr=[
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
-            stiffness=0.0,
-            damping=0.0,
-            effort_limit=187.0,
-            effort_limit_sim=187.0,
-            velocity_limit_sim=100.0,
-        )
+        # Modify OSC reference link
+        self.osc_ee_body = "sfp_tip_link"
 
         # Disable episode timeout
         self.terminations.time_out = None
@@ -139,10 +88,10 @@ class CheatCodeTaskCfg(AICTaskBaseEnv):
 
 gym.register(
     id="CheatCode-Task",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    entry_point=RelCartesianOSPEnv,
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": CheatCodeTaskCfg,
+        "cfg": CheatCodeTaskCfg(),
     },
 )
 
@@ -152,7 +101,7 @@ gym.register(
 
 class CheatCode:
 
-    def __init__(self, env: ManagerBasedRLEnv):
+    def __init__(self, env: RelCartesianOSPEnv):
         self.env = env
         self.num_envs = env.num_envs
         self.device = env.device
@@ -162,20 +111,9 @@ class CheatCode:
         self.port_sensor = env.scene.sensors["sfp_port_sensor"]
         self.robot = env.scene["robot"]
         self.command_term = env.command_manager.get_term("sfp_port_pose_command")
-
-    def get_action(self, target_pos_w, target_quat_w):
-        """Converts world target pose to robot base frame and formats for IK."""
-        base_pos = self.robot.data.root_pos_w
-        base_quat = self.robot.data.root_quat_w
-
-        # Transform target to robot base frame
-        target_pos_b, target_quat_b = math_utils.subtract_frame_transforms(
-            base_pos, base_quat, target_pos_w, target_quat_w
-        )
-
-        # Concatenate for command
-        action = torch.cat([target_pos_b, target_quat_b], dim=-1)
-        return action
+        
+        # Zero action for the step method (RelCartesianOSPEnv expects a 6D delta action)
+        self.zero_action = torch.zeros(self.num_envs, 6, device=self.device)
 
     def run(self):
         """Executes the two-phase insertion sequence."""
@@ -193,9 +131,12 @@ class CheatCode:
         # Move to approach position 
         target_pos_w = port_pos.clone()
         target_pos_w[:, 2] += z_offset
-        action = self.get_action(target_pos_w, port_quat)
+        
+        # Directly set target pose for the OSC controller (without delta action)
+        self.env._target_pos_w = target_pos_w.clone()
+        self.env._target_quat_w = port_quat.clone()
         for i in range(100):
-            obs, _, _, _, _ = self.env.step(action)
+            obs, _, _, _, _ = self.env.step(self.zero_action)
         
         # Compute errors
         tip_pos = self.tip_sensor.data.target_pos_w[:, 0]
@@ -209,7 +150,7 @@ class CheatCode:
         
         # Wait a bit
         for i in range(100):
-            obs, _, _, _, _ = self.env.step(action)
+            obs, _, _, _, _ = self.env.step(self.zero_action)
 
         # Move to insertion position
         while z_offset >= 0.0:
@@ -217,8 +158,10 @@ class CheatCode:
             
             target_pos_w = port_pos.clone()
             target_pos_w[:, 2] += z_offset
-            action = self.get_action(target_pos_w, port_quat)
-            obs, _, _, _, _ = self.env.step(action)
+            
+            self.env._target_pos_w = target_pos_w.clone()
+            self.env._target_quat_w = port_quat.clone()
+            obs, _, _, _, _ = self.env.step(self.zero_action)
         
         tip_pos = self.tip_sensor.data.target_pos_w[:, 0]
         tip_quat = self.tip_sensor.data.target_quat_w[:, 0]
@@ -233,21 +176,18 @@ class CheatCode:
 
         # Keep running until simulation is closed
         while simulation_app.is_running():
-            obs, _, _, _, _ = self.env.step(action)
+            obs, _, _, _, _ = self.env.step(self.zero_action)
 
 
 def main():
-    env_cfg = parse_env_cfg(
-        args_cli.task,
-        device=args_cli.device,
-        num_envs=args_cli.num_envs,
-        use_fabric=not args_cli.disable_fabric,
-    )
-    env = gym.make(args_cli.task, cfg=env_cfg).unwrapped
+    env_cfg = CheatCodeTaskCfg()
+    env_cfg.scene.num_envs = args_cli.num_envs
+    env = RelCartesianOSPEnv(env_cfg)
+
     cheat = CheatCode(env)
     cheat.run()
-    env.close()
 
+    env.close()
 
 if __name__ == "__main__":
     main()

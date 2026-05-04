@@ -27,6 +27,14 @@ class RelCartesianOSPNoRefEnvCfg(AICTaskBaseEnv):
 
     # OSC parameters
     osc_ee_body: str = "gripper_tcp"
+    osc_joint_names: list[str] = [
+        "shoulder_pan_joint",
+        "shoulder_lift_joint",
+        "elbow_joint",
+        "wrist_1_joint",
+        "wrist_2_joint",
+        "wrist_3_joint",
+    ]
     osc_stiffness: tuple[float, ...] = (300.0, 300.0, 300.0, 20.0, 20.0, 20.0)
     osc_damping: tuple[float, ...] = (35.0, 35.0, 35.0, 9.0, 9.0, 9.0)
     osc_inertial_dynamics_decoupling: bool = False
@@ -43,27 +51,13 @@ class RelCartesianOSPNoRefEnvCfg(AICTaskBaseEnv):
         # Dummy joint action that does nothing
         self.actions.arm_action = JointEffortActionCfg(
             asset_name="robot",
-            joint_names=[
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
+            joint_names=self.osc_joint_names,
             scale=0.0, # This makes the action manager output 0 effort
         )
 
         # Replace implicit actuators with explicit torque actuators
         self.scene.robot.actuators["arm"] = IdealPDActuatorCfg(
-            joint_names_expr=[
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
+            joint_names_expr=self.osc_joint_names,
             stiffness=0.0,
             damping=0.0,
             effort_limit=self.osc_effort_limit,
@@ -95,16 +89,8 @@ class RelCartesianOSPEnv(ManagerBasedRLEnv):
             )
 
         # Resolve arm joint indices
-        _arm_joints = [
-            "shoulder_pan_joint",
-            "shoulder_lift_joint",
-            "elbow_joint",
-            "wrist_1_joint",
-            "wrist_2_joint",
-            "wrist_3_joint",
-        ]
         self._arm_joint_ids = torch.tensor(
-            [self._robot.joint_names.index(n) for n in _arm_joints],
+            [self._robot.joint_names.index(n) for n in self.cfg.osc_joint_names],
             device=self.device,
             dtype=torch.long,
         )
@@ -241,7 +227,7 @@ class RelCartesianOSPEnv(ManagerBasedRLEnv):
         tau_arm = tau_arm.clamp(-self.cfg.osc_effort_limit, self.cfg.osc_effort_limit)
         
         num_joints = robot.num_joints
-        if num_joints == 6:
+        if num_joints == len(self.cfg.osc_joint_names):
             robot.set_joint_effort_target(tau_arm)
         else:
             efforts = torch.zeros(self.num_envs, num_joints, device=self.device)

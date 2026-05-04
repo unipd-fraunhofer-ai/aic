@@ -195,7 +195,7 @@ class EventCfg:
         func=mdp.reset_to_near_completion,
         mode="reset",
         params={
-            "reset_data_filename": "near_completion_states.pt",
+            "reset_data_filename": "near_completion_states_50k.pt",
             "only_success": False,
         },
     )

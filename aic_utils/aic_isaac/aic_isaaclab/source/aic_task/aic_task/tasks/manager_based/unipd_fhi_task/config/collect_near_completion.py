@@ -26,22 +26,18 @@ simulation_app = app_launcher.app
 import torch
 import gymnasium as gym
 import isaaclab.utils.math as math_utils
-from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.utils import configclass
 from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab.actuators import IdealPDActuatorCfg
-from isaaclab.envs.mdp import OperationalSpaceControllerActionCfg
-from isaaclab.controllers.operational_space_cfg import OperationalSpaceControllerCfg
 
 from aic_task.tasks.manager_based.unipd_fhi_task import mdp
-from aic_task.tasks.manager_based.unipd_fhi_task.aic_task_base_env import AICTaskBaseEnv
+from aic_task.tasks.manager_based.unipd_fhi_task.config.rel_cart_osp_no_ref import RelCartesianOSPNoRefEnvCfg, RelCartesianOSPEnv
 
 ##
 # Task Configuration for Collection
 ##
 
 @configclass
-class CollectionTaskCfg(AICTaskBaseEnv):
+class CollectionTaskCfg(RelCartesianOSPNoRefEnvCfg):
     """Task configuration specifically for state collection.
     Uses the base environment's randomized reset but with a higher robot Z offset.
     """
@@ -49,53 +45,8 @@ class CollectionTaskCfg(AICTaskBaseEnv):
     def __post_init__(self) -> None:
         super().__post_init__()
 
-        self.actions.arm_action = OperationalSpaceControllerActionCfg(
-            asset_name="robot",
-            joint_names=[
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
-            body_name="sfp_tip_link",
-            body_offset=None,
-            controller_cfg=OperationalSpaceControllerCfg(
-                target_types=["pose_abs"],
-                impedance_mode="fixed",
-                motion_control_axes_task=(1, 1, 1, 1, 1, 1),
-                contact_wrench_control_axes_task=(0, 0, 0, 0, 0, 0),
-                inertial_dynamics_decoupling=True,
-                partial_inertial_dynamics_decoupling=False,
-                gravity_compensation=True,
-              
-                # Kp
-                motion_stiffness_task=(1500.0, 1500.0, 1500.0, 300.0, 300.0, 300.0),
-
-                # choose zeta so that d = 2*sqrt(Kp)*zeta
-                motion_damping_ratio_task=(0.5, 0.5, 0.5, 0.25, 0.25, 0.25),
-            ),
-            position_scale=1.0,
-            orientation_scale=1.0,
-        )
-
-        # replace implicit actuators with explicit torque actuators
-        self.scene.robot.actuators["arm"] = IdealPDActuatorCfg(
-            joint_names_expr=[
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
-            stiffness=0.0,
-            damping=0.0,
-            effort_limit=187.0,
-            effort_limit_sim=187.0,
-            velocity_limit_sim=100.0,
-        )
+       # Modify OSC reference link
+        self.osc_ee_body = "sfp_tip_link"
 
         # Disable terminations during collection
         self.terminations.time_out = None
@@ -135,10 +86,10 @@ class CollectionTaskCfg(AICTaskBaseEnv):
 
 gym.register(
     id="Collection-Task",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    entry_point=RelCartesianOSPEnv,
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": CollectionTaskCfg,
+        "cfg": CollectionTaskCfg(),
     },
 )
 
@@ -147,7 +98,7 @@ gym.register(
 ##
 
 class StateCollector:
-    def __init__(self, env: ManagerBasedRLEnv):
+    def __init__(self, env: RelCartesianOSPEnv):
         self.env = env
         self.num_envs = env.num_envs
         self.device = env.device
@@ -158,15 +109,8 @@ class StateCollector:
         self.robot = env.scene["robot"]
         self.nic_card = env.scene["nic_card"]
         self.command_term = env.command_manager.get_term("sfp_port_pose_command")
-
-    def get_action(self, target_pos_w, target_quat_w):
-        """Converts world target pose to robot base frame and formats for OSC."""
-        base_pos = self.robot.data.root_pos_w
-        base_quat = self.robot.data.root_quat_w
-        target_pos_b, target_quat_b = math_utils.subtract_frame_transforms(
-            base_pos, base_quat, target_pos_w, target_quat_w
-        )
-        return torch.cat([target_pos_b, target_quat_b], dim=-1)
+        
+        self.zero_action = torch.zeros(self.num_envs, 6, device=self.device)
 
     def collect_batch(self, noise_xy=0.0015, z_offset_range=(0.01, 0.02), approach_z_offset=0.07, target_dist=0.01):
         """Performs a single reset-approach-capture sequence across all envs."""
@@ -190,9 +134,11 @@ class StateCollector:
         print("[Batch] Moving to high approach...")
         approach_pos_w = target_port_pos.clone()
         approach_pos_w[:, 2] += approach_z_offset
-        action = self.get_action(approach_pos_w, port_quat)
+        
+        self.env._target_pos_w = approach_pos_w.clone()
+        self.env._target_quat_w = port_quat.clone()
         for _ in range(100):
-            self.env.step(action)
+            self.env.step(self.zero_action)
             
         # 3. Near-Completion Phase (gradual descent)
         print("[Batch] Moving to near-completion target...")
@@ -204,20 +150,22 @@ class StateCollector:
             target_pos_w = target_port_pos.clone()
             target_pos_w[:, 2] += current_extra_z.squeeze(-1)
             
-            action = self.get_action(target_pos_w, port_quat)
-            self.env.step(action)
+            self.env._target_pos_w = target_pos_w.clone()
+            self.env._target_quat_w = port_quat.clone()
+            self.env.step(self.zero_action)
         
         # Phase 4: Wait to settle
         print("[Batch] Waiting to settle...")
         for _ in range(50):
-            self.env.step(action)
+            self.env.step(self.zero_action)
             
         # 5. Capture States
         print("[Batch] Capturing states...")
         # Success condition: distance from original target <= target_dist
         tip_pos = self.tip_sensor.data.target_pos_w[:, 0]
-        target_pos_w[:, :2] -= noise # go back to original pose
-        dist_to_target = torch.norm(target_port_pos - tip_pos, dim=-1)
+        original_target_pos = target_port_pos.clone()
+        original_target_pos[:, :2] -= noise 
+        dist_to_target = torch.norm(original_target_pos - tip_pos, dim=-1)
         success = (dist_to_target <= target_dist).float()
         print(f"[Batch] Sample success rate: {success.mean().item():.4f}, avg dist: {dist_to_target.mean().item():.4f}, min dist: {dist_to_target.min().item():.4f}, max dist: {dist_to_target.max().item():.4f} ")
         
@@ -244,7 +192,10 @@ def main():
     # Setup environment
     env_cfg = CollectionTaskCfg()
     env_cfg.scene.num_envs = args_cli.num_envs
-    env = gym.make("Collection-Task", cfg=env_cfg).unwrapped
+    
+    # We need to register the task first if we want to use gym.make
+    # Or we can just instantiate the env class
+    env = RelCartesianOSPEnv(env_cfg)
     
     collector = StateCollector(env)
     
