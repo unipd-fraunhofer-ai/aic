@@ -30,7 +30,7 @@ def modify_reset_prob(
     weight = reward_manager.get_term_cfg(reward_term_name).weight
     
     # Get current success rate from the reward term's step buffer
-    # _step_reward stores (value / dt), which is (reward_func_output * weight)
+    # _step_reward stores (reward_func_output * weight)
     if weight != 0:
         term_rewards = reward_manager._step_reward[:, term_idx]
         success_rate = torch.mean(term_rewards / weight).item()
