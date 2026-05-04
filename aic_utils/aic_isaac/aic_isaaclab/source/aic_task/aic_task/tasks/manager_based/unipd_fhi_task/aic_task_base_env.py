@@ -11,6 +11,7 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import ActionTermCfg as ActionTerm
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -196,7 +197,7 @@ class EventCfg:
         mode="reset",
         params={
             "reset_data_filename": "near_completion_states_50k.pt",
-            "only_success": False,
+            "partially_inserted_prob": 0.8,  # Start with high probability of partially inserted states
         },
     )
 
@@ -374,6 +375,22 @@ class RewardsCfg:
     )
 
 
+@configclass
+class CurriculumCfg:
+    """Configuration for curriculum terms."""
+
+    modify_reset_prob = CurrTerm(
+        func=mdp.modify_reset_prob,
+        params={
+            "event_term_name": "reset_scene",
+            "reward_term_name": "insertion_completed",
+            "update_threshold": 0.8,
+            "step": 0.05,
+            "min_prob": 0.2,
+        },
+    )
+
+
 ##
 # Environment configuration
 ##
@@ -393,6 +410,7 @@ class AICTaskBaseEnv(ManagerBasedRLEnvCfg):
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventCfg = EventCfg()
+    curriculum: CurriculumCfg = CurriculumCfg()
 
     def __post_init__(self) -> None:
         super().__post_init__()

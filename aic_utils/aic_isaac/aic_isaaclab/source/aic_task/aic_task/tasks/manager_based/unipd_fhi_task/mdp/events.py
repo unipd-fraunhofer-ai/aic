@@ -290,7 +290,7 @@ class reset_to_near_completion(ManagerTermBase):
         reset_data_filename: str,
         robot_scene_name: str = "robot",
         nic_card_scene_name: str = "nic_card",
-        only_success: bool = False,
+        partially_inserted_prob: float = 0.0,
     ):
         # Lazy load the data
         if self.data is None:
@@ -313,11 +313,18 @@ class reset_to_near_completion(ManagerTermBase):
         env_origins = env.scene.env_origins[env_ids]
         
         # Sample indices from the collected data
-        if only_success and len(self.success_indices) > 0:
-            sub_ids = torch.randint(0, len(self.success_indices), (n,), device=device)
-            sample_ids = self.success_indices[sub_ids]
-        else:
-            sample_ids = torch.randint(0, self.data["num_samples"], (n,), device=device)
+        # Determine which environments reset to partially inserted (i.e. "success") states 
+        use_success = torch.rand(n, device=device) < partially_inserted_prob
+        sample_ids = torch.empty(n, dtype=torch.long, device=device)
+
+        # Handle environments resetting to success states
+        if use_success.any():
+            sub_ids = torch.randint(0, len(self.success_indices), (use_success.sum(),), device=device)
+            sample_ids[use_success] = self.success_indices[sub_ids]
+
+        # Handle environments resetting to any state
+        if (~use_success).any():
+            sample_ids[~use_success] = torch.randint(0, self.data["num_samples"], ((~use_success).sum(),), device=device)
         
         # 1. Reset Robot
         robot = env.scene[robot_scene_name]
