@@ -52,7 +52,7 @@ class AICTaskSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.UsdFileCfg(
             usd_path=os.path.join(AIC_ASSET_DIR, "aic_unified_robot_cable_sdf.usd"),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                # disable_gravity=True,
+                disable_gravity=False,
                 max_depenetration_velocity=5.0,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(

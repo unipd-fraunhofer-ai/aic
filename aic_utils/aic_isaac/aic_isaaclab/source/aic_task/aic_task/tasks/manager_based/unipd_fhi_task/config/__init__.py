@@ -29,7 +29,7 @@ gym.register(
 
 gym.register(
     id="Rel-Cart-OSP-No-Ref",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    entry_point=f"{__name__}.rel_cart_osp_no_ref:RelCartesianOSPEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.rel_cart_osp_no_ref:RelCartesianOSPNoRefEnvCfg",
