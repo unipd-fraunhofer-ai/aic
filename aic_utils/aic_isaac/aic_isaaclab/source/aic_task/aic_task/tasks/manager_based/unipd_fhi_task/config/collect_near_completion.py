@@ -58,7 +58,7 @@ class CollectionTaskCfg(RelCartesianOSPNoRefEnvCfg):
             mode="reset",
             params={
                 "board_scene_name": "task_board",
-                "board_default_pos": (0.35, -0.30, 0.0),
+                "board_default_pos": (0.15, -0.2, 1.14),
                 "board_range": {"x": (-0.05, 0.05), "y": (-0.05, 0.05)},
                 "parts": [
                     {

@@ -64,7 +64,7 @@ class AICTaskSceneCfg(InteractiveSceneCfg):
             activate_contact_sensors=False,
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(-0.18, -0.122, 0),
+            pos=(-0.2, 0.2, 1.14),
             rot=(0.0, 0.0, 0.0, 1.0),
             joint_pos={
                 "shoulder_pan_joint": -0.1597,
@@ -105,7 +105,7 @@ class AICTaskSceneCfg(InteractiveSceneCfg):
             usd_path=os.path.join(AIC_SCENE_DIR, "scene", "aic.usd"),
         ),
         init_state=AssetBaseCfg.InitialStateCfg(
-            pos=(0.0, 0.0, -1.15),
+            pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
     )
@@ -121,7 +121,7 @@ class AICTaskSceneCfg(InteractiveSceneCfg):
             ),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.35, -0.30, 0.0),
+            pos=(0.15, -0.2, 1.14), rot=(1.0, 0.0, 0.0, 0.0)
         ),
     )
 
@@ -134,7 +134,7 @@ class AICTaskSceneCfg(InteractiveSceneCfg):
             ),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.31765, -0.27671, 0.0743),
+            pos=(0.11765, -0.17671, 1.2143),
             rot=(0.0, 0.0, -0.7068252, 0.7073883),
         ),
     )
@@ -196,7 +196,7 @@ class EventCfg:
         func=mdp.reset_to_near_completion,
         mode="reset",
         params={
-            "reset_data_filename": "near_completion_states_50k.pt",
+            "reset_data_filename": "near_completion_states.pt",
             "partially_inserted_prob": 0.8,  # Start with high probability of partially inserted states
         },
     )
@@ -421,3 +421,9 @@ class AICTaskBaseEnv(ManagerBasedRLEnvCfg):
         self.episode_length_s = 10.0
         self.sim.dt = 1.0 / 120.0
         self.viewer.eye = (8.0, 0.0, 5.0)
+
+        # Viewport / video framing.
+        self.viewer.origin_type = "env"
+        self.viewer.env_index = 0
+        self.viewer.eye = (0.45, 0.30, 1.50)
+        self.viewer.lookat = (0.10, -0.20, 1.20)

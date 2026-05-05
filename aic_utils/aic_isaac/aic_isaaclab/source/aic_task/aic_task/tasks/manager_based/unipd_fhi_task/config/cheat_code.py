@@ -44,8 +44,8 @@ def reset(env, env_ids):
 
     # Reset robot
     robot = env.scene["robot"]
-    robot_pos = torch.tensor([0.0, 0.0, 0.0], device=device).unsqueeze(0).expand(n, -1)
-    robot_rot = torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).unsqueeze(0).expand(n, -1)
+    robot_pos = torch.tensor((-0.2, 0.2, 1.14), device=device).unsqueeze(0).expand(n, -1)
+    robot_rot = torch.tensor([0.0, 0.0, 0.0, 1.0], device=device).unsqueeze(0).expand(n, -1)
     robot.write_root_pose_to_sim(torch.cat([robot_pos + env_origins, robot_rot], dim=-1), env_ids=env_ids)
     robot.write_root_velocity_to_sim(torch.zeros(n, 6, device=device), env_ids=env_ids)
 
@@ -55,7 +55,7 @@ def reset(env, env_ids):
 
     # Reset NIC card
     nic_card = env.scene["nic_card"]
-    nic_card_pos = torch.tensor([-0.397, 0.208, 0.102], device=device).unsqueeze(0).expand(n, -1)
+    nic_card_pos = torch.tensor((0.11765, -0.17671, 1.2143), device=device).unsqueeze(0).expand(n, -1)
     nic_card_rot = torch.tensor([0.0, 0.0, -0.7068252, 0.7073883], device=device).unsqueeze(0).expand(n, -1)
     nic_card.write_root_pose_to_sim(torch.cat([nic_card_pos + env_origins, nic_card_rot], dim=-1), env_ids=env_ids)
     nic_card.write_root_velocity_to_sim(torch.zeros(n, 6, device=device), env_ids=env_ids)
