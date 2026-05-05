@@ -384,7 +384,7 @@ class CurriculumCfg:
         params={
             "event_term_name": "reset_scene",
             "reward_term_name": "insertion_completed",
-            "update_threshold": 0.7,
+            "update_threshold": 0.6,
             "step": 0.05,
             "min_prob": 0.2,
         },

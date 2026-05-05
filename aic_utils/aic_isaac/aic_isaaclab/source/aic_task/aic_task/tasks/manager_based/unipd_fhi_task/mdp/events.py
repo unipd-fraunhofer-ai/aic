@@ -311,9 +311,7 @@ class reset_to_near_completion(ManagerTermBase):
         device = env.device
         n = len(env_ids)
         env_origins = env.scene.env_origins[env_ids]
-        
-        # Sample indices from the collected data
-        # Determine which environments reset to partially inserted (i.e. "success") states 
+
         use_success = torch.rand(n, device=device) < partially_inserted_prob
         sample_ids = torch.empty(n, dtype=torch.long, device=device)
 
@@ -355,5 +353,5 @@ class reset_to_near_completion(ManagerTermBase):
         # 3. Enforce consistent command target
         if self.command_term is None:
             self.command_term = env.command_manager.get_term(self.cfg.params.get("command_name", "sfp_port_pose_command"))
-            self.command_term.pending_targets_idx = torch.zeros(env.num_envs, dtype=torch.long, device=device)
+            self.command_term.pending_targets_idx = torch.full((env.num_envs,), -1, dtype=torch.long, device=device)        
         self.command_term.pending_targets_idx[env_ids] = self.data["target_idx"][sample_ids].to(device)

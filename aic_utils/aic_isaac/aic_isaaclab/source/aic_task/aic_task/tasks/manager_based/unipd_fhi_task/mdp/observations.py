@@ -68,8 +68,8 @@ def target_port_base(
     """Minimal target port pose in robot base frame — (x,y,yaw)."""
     robot = env.scene[asset_cfg.name]
     command_term = env.command_manager.get_term(command_name)
-    target_pos_w = command_term.pose_command_w[:, :3]
-    target_quat_w = command_term.pose_command_w[:, 3:]
+    target_pos_w = command_term.poses_w[:, :3]
+    target_quat_w = command_term.poses_w[:, 3:]
     
     pos_rel, quat_rel = subtract_frame_transforms(
         robot.data.root_pos_w, robot.data.root_quat_w, target_pos_w, target_quat_w
@@ -87,8 +87,8 @@ def target_port_pos_base(
     """Target port position relative to robot base frame — 3-D (x,y,z)."""
     robot = env.scene[asset_cfg.name]
     command_term = env.command_manager.get_term(command_name)
-    target_pos_w = command_term.pose_command_w[:, :3]
-    target_quat_w = command_term.pose_command_w[:, 3:]
+    target_pos_w = command_term.poses_w[:, :3]
+    target_quat_w = command_term.poses_w[:, 3:]
     
     pos_rel, _ = subtract_frame_transforms(
         robot.data.root_pos_w, robot.data.root_quat_w, target_pos_w, target_quat_w
@@ -104,8 +104,8 @@ def target_port_rpy_base(
     """Target port orientation as (roll, pitch, yaw) in robot base frame — 3-D (radians)."""
     robot = env.scene[asset_cfg.name]
     command_term = env.command_manager.get_term(command_name)
-    target_pos_w = command_term.pose_command_w[:, :3]
-    target_quat_w = command_term.pose_command_w[:, 3:]
+    target_pos_w = command_term.poses_w[:, :3]
+    target_quat_w = command_term.poses_w[:, 3:]
     
     _, quat_rel = subtract_frame_transforms(
         robot.data.root_pos_w, robot.data.root_quat_w, target_pos_w, target_quat_w

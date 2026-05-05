@@ -45,7 +45,6 @@ def modify_reset_prob(
     if success_rate > update_threshold:
         new_prob = max(min_prob, current_prob - step)
         event_term_cfg.params[param_name] = new_prob
-        print(f"[Curriculum] Success rate: {success_rate:.4f} > {update_threshold}. Updating {event_term_name} '{param_name}' to {new_prob:.4f}")
     
     return event_term_cfg.params.get(param_name, 0.0)
 

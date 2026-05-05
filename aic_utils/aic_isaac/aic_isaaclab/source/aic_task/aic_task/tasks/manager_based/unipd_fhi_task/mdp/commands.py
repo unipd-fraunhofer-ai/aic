@@ -27,27 +27,46 @@ class SfpPoseTargetCommand(CommandTerm):
 
         # Command buffer: (N, 7) -> [pos, quat] relative to asset
         self.poses_b = torch.zeros((self.num_envs, 7), device=self.device)
-        self.pose_command_w = torch.zeros_like(self.poses_b)
+        self.poses_w = torch.zeros_like(self.poses_b)
         self.targets_idx = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.pending_targets_idx = None
 
+        # Indicies for visualizing the targets
+        self.marker_indices = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+
     def _resample_command(self, env_ids: torch.Tensor):
         if self.pending_targets_idx is not None:
-            self.targets_idx[env_ids] = self.pending_targets_idx[env_ids]
+            # Check for pending overrides (where value != -1)
+            is_pending = self.pending_targets_idx[env_ids] != -1
+            
+            # Use pending target if available
+            self.targets_idx[env_ids[is_pending]] = self.pending_targets_idx[env_ids[is_pending]]
+            
+            # Randomly select for others
+            if (~is_pending).any():
+                self.targets_idx[env_ids[~is_pending]] = torch.randint(0, 2, ((~is_pending).sum(),), device=self.device)
+            
+            # Clear pending overrides for the resampled envs
+            self.pending_targets_idx[env_ids] = -1
         else:
             # Randomly select between port 0 (0) and port 1 (1)
             self.targets_idx[env_ids] = torch.randint(0, 2, (len(env_ids),), device=self.device)
 
+        # Immediate update of command buffers for fresh data
+        self._update_command()
+
     def _update_command(self):
         # Fetch the current relative poses from the sensor
-        # sensor.data.target_pos_source: (N, 2, 3)
         self.poses_b[:, :3] = self.sensor.data.target_pos_source[torch.arange(self.num_envs), self.targets_idx]
         self.poses_b[:, 3:] = self.sensor.data.target_quat_source[torch.arange(self.num_envs), self.targets_idx]
+       
+        # Fetch world pose of active target for visualization
+        self.poses_w[:, :3] = self.sensor.data.target_pos_w[torch.arange(self.num_envs), self.targets_idx]
+        self.poses_w[:, 3:] = self.sensor.data.target_quat_w[torch.arange(self.num_envs), self.targets_idx]
 
     def _update_metrics(self):
-        # Fetch world pose of active target for visualization
-        self.pose_command_w[:, :3] = self.sensor.data.target_pos_w[torch.arange(self.num_envs), self.targets_idx]
-        self.pose_command_w[:, 3:] = self.sensor.data.target_quat_w[torch.arange(self.num_envs), self.targets_idx]
+        # No metrics to compute
+        pass
     
     def _set_debug_vis_impl(self, debug_vis: bool):
         # create markers if necessary for the first time
@@ -63,10 +82,7 @@ class SfpPoseTargetCommand(CommandTerm):
         # update the markers
         if not hasattr(self.sensor, "data") or self.sensor.data.target_pos_w is None:
             return
-        
-        # Ensure we have a pose for every environment
-        marker_indices = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
-        self.visualizer.visualize(self.pose_command_w[:, :3], self.pose_command_w[:, 3:], marker_indices=marker_indices)
+        self.visualizer.visualize(self.poses_w[:, :3], self.poses_w[:, 3:], marker_indices=self.marker_indices)
 
     @property
     def command(self) -> torch.Tensor:
