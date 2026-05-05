@@ -196,7 +196,7 @@ class EventCfg:
         func=mdp.reset_to_near_completion,
         mode="reset",
         params={
-            "reset_data_filename": "near_completion_states.pt",
+            "reset_data_filename": "near_completion_states_100k.pt",
             "partially_inserted_prob": 0.8,  # Start with high probability of partially inserted states
         },
     )
@@ -401,7 +401,7 @@ class AICTaskBaseEnv(ManagerBasedRLEnvCfg):
     """Base environment configuration for the AIC task"""
 
     # Scene settings
-    scene: AICTaskSceneCfg = AICTaskSceneCfg(num_envs=2048, env_spacing=4.0)
+    scene: AICTaskSceneCfg = AICTaskSceneCfg(num_envs=2048, env_spacing=2.0)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -420,7 +420,6 @@ class AICTaskBaseEnv(ManagerBasedRLEnvCfg):
         self.sim.render_interval = self.decimation
         self.episode_length_s = 10.0
         self.sim.dt = 1.0 / 120.0
-        self.viewer.eye = (8.0, 0.0, 5.0)
 
         # Viewport / video framing.
         self.viewer.origin_type = "env"

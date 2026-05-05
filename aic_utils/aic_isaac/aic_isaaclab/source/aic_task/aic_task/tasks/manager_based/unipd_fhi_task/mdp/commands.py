@@ -31,9 +31,6 @@ class SfpPoseTargetCommand(CommandTerm):
         self.targets_idx = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.pending_targets_idx = None
 
-        # Indicies for visualizing the targets
-        self.marker_indices = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
-
     def _resample_command(self, env_ids: torch.Tensor):
         if self.pending_targets_idx is not None:
             # Check for pending overrides (where value != -1)
@@ -54,6 +51,7 @@ class SfpPoseTargetCommand(CommandTerm):
 
         # Immediate update of command buffers for fresh data
         self._update_command()
+        self._debug_vis_callback(None)
 
     def _update_command(self):
         # Fetch the current relative poses from the sensor
@@ -82,7 +80,8 @@ class SfpPoseTargetCommand(CommandTerm):
         # update the markers
         if not hasattr(self.sensor, "data") or self.sensor.data.target_pos_w is None:
             return
-        self.visualizer.visualize(self.poses_w[:, :3], self.poses_w[:, 3:], marker_indices=self.marker_indices)
+        marker_indices = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self.visualizer.visualize(self.poses_w[:, :3], self.poses_w[:, 3:], marker_indices=marker_indices)
 
     @property
     def command(self) -> torch.Tensor:
