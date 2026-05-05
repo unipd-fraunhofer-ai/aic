@@ -5,9 +5,9 @@
 
 """Script to collect near-completion states for the insertion task."""
 
-import argparse
 import os
 import torch
+import argparse
 from isaaclab.app import AppLauncher
 
 # 1. Setup Argparse
@@ -70,12 +70,12 @@ class CollectionTaskCfg(RelCartesianOSPNoRefEnvCfg):
                 ],
                 "target_ee_offset_asset_name": "nic_card",
                 "ee_offset_range": {
-                    "x": (-0.03, 0.03), 
-                    "y": (-0.03, 0.03), 
-                    "z": (0.10, 0.10),  # Increased Z offset to be higher
-                    "roll": (-10.0, 10.0),
-                    "pitch": (-10.0, 10.0),
-                    "yaw": (-10.0, 10.0),
+                    "x": (0.00, 0.00), 
+                    "y": (0.00, 0.00), 
+                    "z": (0.13, 0.13),  # Increased Z offset to be higher
+                    "roll": (0.0, 0.0),
+                    "pitch": (0.0, 0.0),
+                    "yaw": (0.0, 0.0),
                 },
             },
         )
@@ -112,7 +112,7 @@ class StateCollector:
         
         self.zero_action = torch.zeros(self.num_envs, 6, device=self.device)
 
-    def collect_batch(self, noise_xy=0.0015, z_offset_range=(0.01, 0.02), approach_z_offset=0.07, target_dist=0.01):
+    def collect_batch(self, noise_xy=0.0015, noise_yaw=10.0, z_offset_range=(0.01, 0.03), approach_z_offset=0.07, target_dist=0.005):
         """Performs a single reset-approach-capture sequence across all envs."""
         self.env.reset()
         env_ids = torch.arange(self.num_envs, device=self.device)
@@ -123,35 +123,43 @@ class StateCollector:
         port_quat = self.port_sensor.data.target_quat_w[env_ids, target_idx]
 
         # 1. Randomized near-completion target
-        noise = torch.empty((self.num_envs, 2), device=self.device).uniform_(-noise_xy, noise_xy)
+        xy_noise = torch.empty((self.num_envs, 2), device=self.device).uniform_(-noise_xy, noise_xy)
+        yaw_noise = torch.empty((self.num_envs, 1), device=self.device).uniform_(-noise_yaw, noise_yaw)
         z_final_offset = torch.empty((self.num_envs, 1), device=self.device).uniform_(*z_offset_range)
 
-        target_port_pos = port_pos.clone()
-        target_port_pos[:, :2] += noise
-        target_port_pos[:, 2] += z_final_offset.squeeze(-1)
+        # Final Target
+        target_pos_w = port_pos.clone()
+        target_pos_w[:, 2] += z_final_offset.squeeze(-1)
+        
+        # Approach Target
+        approach_pos_w = target_pos_w.clone()
+        approach_pos_w[:, :2] += xy_noise
+        approach_pos_w[:, 2] += approach_z_offset
+
+        yaw_noise_rad = torch.deg2rad(yaw_noise.squeeze(-1))
+        noise_quat = math_utils.quat_from_euler_xyz(
+            torch.zeros_like(yaw_noise_rad), 
+            torch.zeros_like(yaw_noise_rad), 
+            yaw_noise_rad
+        )
+        approach_rot_w = math_utils.quat_mul(port_quat, noise_quat)
         
         # 2. Approach Phase (Higher)
-        print("[Batch] Moving to high approach...")
-        approach_pos_w = target_port_pos.clone()
-        approach_pos_w[:, 2] += approach_z_offset
-        
+        print("[Batch] Moving to high approach...")        
         self.env._target_pos_w = approach_pos_w.clone()
-        self.env._target_quat_w = port_quat.clone()
+        self.env._target_quat_w = approach_rot_w.clone()
         for _ in range(100):
             self.env.step(self.zero_action)
             
         # 3. Near-Completion Phase (gradual descent)
         print("[Batch] Moving to near-completion target...")
-        current_extra_z = torch.full((self.num_envs, 1), approach_z_offset, device=self.device)
-        while torch.any(current_extra_z > 0.0):
-            current_extra_z -= 0.0005 
-            current_extra_z = torch.clamp(current_extra_z, min=0.0)
+        z_descent_step = 0.0005
+        num_steps = int(approach_z_offset / z_descent_step)
+        for _ in range(num_steps):
+            approach_pos_w[:, 2] -= z_descent_step
             
-            target_pos_w = target_port_pos.clone()
-            target_pos_w[:, 2] += current_extra_z.squeeze(-1)
-            
-            self.env._target_pos_w = target_pos_w.clone()
-            self.env._target_quat_w = port_quat.clone()
+            self.env._target_pos_w = approach_pos_w.clone()
+            self.env._target_quat_w = approach_rot_w.clone()
             self.env.step(self.zero_action)
         
         # Phase 4: Wait to settle
@@ -161,11 +169,9 @@ class StateCollector:
             
         # 5. Capture States
         print("[Batch] Capturing states...")
-        # Success condition: distance from original target <= target_dist
+        # Success: distance from final target <= target_dist
         tip_pos = self.tip_sensor.data.target_pos_w[:, 0]
-        original_target_pos = target_port_pos.clone()
-        original_target_pos[:, :2] -= noise 
-        dist_to_target = torch.norm(original_target_pos - tip_pos, dim=-1)
+        dist_to_target = torch.norm(target_pos_w - tip_pos, dim=-1)
         success = (dist_to_target <= target_dist).float()
         print(f"[Batch] Sample success rate: {success.mean().item():.4f}, avg dist: {dist_to_target.mean().item():.4f}, min dist: {dist_to_target.min().item():.4f}, max dist: {dist_to_target.max().item():.4f} ")
         
@@ -185,7 +191,8 @@ class StateCollector:
             "robot_root_state": robot_root_state,
             "nic_card_root_state": nic_card_root_state,
             "target_idx": target_idx.clone(),
-            "success": success
+            "success": success.clone(),
+            "dist_to_target": dist_to_target.clone()
         }
 
 def main():
@@ -205,12 +212,13 @@ def main():
         "robot_root_state": [],
         "nic_card_root_state": [],
         "target_idx": [],
-        "success": []
+        "success": [],
+        "dist_to_target": []
     }
     
     collected_count = 0
     while collected_count < args_cli.max_samples:
-        batch_data = collector.collect_batch(noise_xy=0.0015)
+        batch_data = collector.collect_batch(noise_xy=0.0015, noise_yaw=5.0)
         
         for key in all_data:
             all_data[key].append(batch_data[key].cpu())
