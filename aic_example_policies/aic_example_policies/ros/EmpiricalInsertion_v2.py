@@ -173,11 +173,11 @@ def add_noise_to_transform(transform, pos_std=[0.002]*3, rot_std=[np.deg2rad(2)]
     rot_std: rotation std in radians
     """
     # Translation noise
-    transform.translation.x += np.abs(np.random.normal(0.0, pos_std[0]))
-    transform.translation.y += np.abs(np.random.normal(0.0, pos_std[1]))
+    transform.translation.x += np.abs(np.random.uniform(0.0, pos_std[0]))
+    transform.translation.y += np.abs(np.random.uniform(0.0, pos_std[1]))
     transform.translation.z += 0.
-    # transform.translation.x += 0.005
-    # transform.translation.y += 0.005
+    # transform.translation.x += 0.004
+    # transform.translation.y += 0.004
     # transform.translation.z -= 0.00
 
     # Current quaternion [x, y, z, w]
@@ -191,10 +191,10 @@ def add_noise_to_transform(transform, pos_std=[0.002]*3, rot_std=[np.deg2rad(2)]
     # Small rotation noise in roll-pitch-yaw
     # roll_noise = np.random.normal(0.0, rot_std[0])
     # pitch_noise = np.random.normal(0.0, rot_std[1])
-    yaw_noise = np.random.normal(0.0, rot_std[2])
+    yaw_noise = np.random.uniform(-rot_std[2], rot_std[2])
     roll_noise = np.deg2rad(0)
     pitch_noise = np.deg2rad(0)
-    # yaw_noise = np.deg2rad(-5)
+    # yaw_noise = np.deg2rad(-7)
 
     q_noise = euler_xyz_to_quat(roll_noise, pitch_noise, yaw_noise)
 
@@ -266,8 +266,8 @@ class EmpiricalInsertion_v2(Policy):
         self._tip_y_error_integrator = 0.0
         self._max_integrator_windup = 0.05
         self._task = None
-        self.pos_std = [0.001]*3   # Scale of the noise to add to the target position
-        self.rot_std = [0.01]*3    # Scale of the noise to add to the target rotation
+        self.pos_std = [0.006]*3   # Scale of the noise to add to the target position
+        self.rot_std = [np.deg2rad(7)]*3    # Scale of the noise to add to the target rotation
         super().__init__(parent_node)
         self._plug_wrench_pub = parent_node.create_publisher(
             WrenchStamped,
@@ -542,13 +542,13 @@ class EmpiricalInsertion_v2(Policy):
         port_transform = None
         gripper_tip_transform = None
 
-        z_offset = 0.15
+        z_offset = 0.10
         z_force_threshold = -2.0  # [N], threshold for detecting contact in Z during insertion
         stiffness = [200.0, 200.0, 200.0, 50, 50, 50]
         wrench_feedback_gains_at_tip = [0.] * 3 + [0] * 3
 
-        roll_angle = np.deg2rad(10)
-        pitch_angle = np.deg2rad(10)
+        roll_angle = np.deg2rad(15)
+        pitch_angle = np.deg2rad(15)
         yaw_angle = np.deg2rad(0)
         untilt_start_time = None
         untilt_duration = Duration(seconds=30.0)
@@ -556,7 +556,8 @@ class EmpiricalInsertion_v2(Policy):
 
         move_above_step = 0
         insertion_start_time = None
-        stabilize_steps = 0
+        stabilize_step = 0
+        target_stabilize_steps = 50        
         tf_initialized = False
         
         # fix yaw parameters
@@ -567,7 +568,7 @@ class EmpiricalInsertion_v2(Policy):
         fix_yaw_best_z = None
         fix_yaw_no_improve_steps = 0
         fix_yaw_max_no_improve_steps = 100
-        fix_yaw_step = np.deg2rad(0.05)
+        fix_yaw_step = np.deg2rad(0.2)
         fix_yaw_limit = np.deg2rad(10.0)
         fix_yaw_min_z_improvement = 0.001
 
@@ -690,7 +691,7 @@ class EmpiricalInsertion_v2(Policy):
                     state = InsertCableState.STABILIZE
                     continue
                 else:
-                    z_offset -= 0.0005
+                    z_offset -= 0.001
                 
                 try:
                     self.set_pose_target(
@@ -738,11 +739,13 @@ class EmpiricalInsertion_v2(Policy):
                     self.get_logger().info(
                         "Insertion completed."
                     )
+                    port_transform.translation.x = plug_pose.pose.position.x
+                    port_transform.translation.y = plug_pose.pose.position.y
                     if plug_pose.pose.position.z >= 0.1765:
                         self.get_logger().warn(
                             "Plug tip is not aligned with port. Trying to fix yaw before redescending."
                         )
-                        state = InsertCableState.UNTILT_INSERTED_CABLE
+                        state = InsertCableState.FIX_YAW
                     else:
                         self.get_logger().warn(
                             "Plug tip is aligned with port. Trying to reorient."
@@ -750,7 +753,7 @@ class EmpiricalInsertion_v2(Policy):
                         state = InsertCableState.UNTILT_INSERTED_CABLE
                     continue
                 else:
-                    z_offset -= 0.0005
+                    z_offset -= 0.001
 
                 self.get_logger().info(
                     f"untilting: roll={np.rad2deg(roll_angle):0.3f} deg, "
@@ -806,7 +809,7 @@ class EmpiricalInsertion_v2(Policy):
                     self.get_logger().info(
                         "Insertion completed."
                     )
-                    state = InsertCableState.FIX_YAW
+                    state = InsertCableState.REDESCEND
                     continue
                 
                 z_offset += 0.001
@@ -819,7 +822,7 @@ class EmpiricalInsertion_v2(Policy):
 
                 try:
                     wrench_feedback_gains_at_tip = [0.] * 3 + [-.0] * 3
-                    stiffness= [1,1,200,50,50,200]
+                    stiffness= [90,90,200,50,50,200]
                     # damping= [200,200,200,80,80,80]
                     self.set_pose_target(
                         move_robot=move_robot,
@@ -852,7 +855,7 @@ class EmpiricalInsertion_v2(Policy):
 
                 try:
                     wrench_feedback_gains_at_tip = [0.] * 3 + [-.0] * 2 + [-.0]
-                    stiffness= [1,1,90,200,200,200]
+                    stiffness= [90,90,90,200,200,200]
                     # damping= [200,200,200,80,80,80]
                     self.set_pose_target(
                         move_robot=move_robot,
@@ -952,7 +955,7 @@ class EmpiricalInsertion_v2(Policy):
                 if plug_inserted:
                     self.get_logger().info("Yaw fixed.")
                     fix_yaw_start_z = None
-                    state = InsertCableState.REDESCEND
+                    state = InsertCableState.UNTILT_INSERTED_CABLE
                     continue
 
                 # Lower z is better here.
@@ -967,7 +970,7 @@ class EmpiricalInsertion_v2(Policy):
                 yaw_limit_reached = abs(yaw_angle) >= fix_yaw_limit
                 no_improvement = fix_yaw_no_improve_steps >= fix_yaw_max_no_improve_steps
 
-                if yaw_limit_reached or no_improvement:
+                if yaw_limit_reached or no_improvement: #or np.abs(plug_wrench.torque.z) > 6:
                     fix_yaw_attempt += 1
 
                     if fix_yaw_attempt < fix_yaw_max_attempts:
@@ -976,7 +979,7 @@ class EmpiricalInsertion_v2(Policy):
                         )
 
                         fix_yaw_direction *= -1.0
-                        yaw_angle = 0.0
+                        # yaw_angle = 0.0
                         fix_yaw_start_z = None
                         fix_yaw_best_z = None
                         fix_yaw_no_improve_steps = 0
@@ -986,12 +989,12 @@ class EmpiricalInsertion_v2(Policy):
                         self.get_logger().error(
                             "Yaw adjustment failed in both directions."
                         )
-                        state = InsertCableState.FAILED
+                        state = InsertCableState.UNTILT_INSERTED_CABLE
                         continue
 
                 try:
                     wrench_feedback_gains_at_tip = [0.] * 3 + [-.0] * 3
-                    stiffness = [10, 10, 90, 50, 50, 200]
+                    stiffness = [90, 90, 90, 50, 50, 200]
 
                     self.set_pose_target(
                         move_robot=move_robot,
@@ -1016,8 +1019,8 @@ class EmpiricalInsertion_v2(Policy):
 
             elif state == InsertCableState.STABILIZE:
                 self.get_logger().info("Waiting for connector to stabilize...")
-                stabilize_steps +=1 
-                if stabilize_steps > 100:
+                stabilize_step +=1 
+                if stabilize_step > target_stabilize_steps:
                     state = InsertCableState.DONE
                 self.sleep_for(0.05)
 
