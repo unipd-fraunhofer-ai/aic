@@ -30,30 +30,60 @@ class SfpPoseTargetCommand(CommandTerm):
         self.poses_w = torch.zeros_like(self.poses_b)
         self.targets_idx = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.pending_targets_idx = None
+        
+        # Mapping from logical index (0: port_0, 1: port_1) to physical sensor index
+        self._port_indices = torch.tensor([0, 1], device=self.device)
+        self._port_indices_resolved = False
+
+    def _resolve_port_indices(self):
+        """Resolves the physical indices of 'port_0' and 'port_1' from the sensor data. Order may change wrt sensor creation."""
+        if self._port_indices_resolved:
+            return
+        
+        # Check if sensor data is available
+        if not hasattr(self.sensor, "data") or self.sensor.data.target_frame_names is None:
+            return
+
+        frame_names = self.sensor.data.target_frame_names
+        try:
+            p0_idx = frame_names.index("port_0")
+            p1_idx = frame_names.index("port_1")
+            self._port_indices = torch.tensor([p0_idx, p1_idx], device=self.device)
+            self._port_indices_resolved = True
+        except ValueError:
+            raise ValueError(f"port_0 or port_1 not found in sensor {self.cfg.sensor_name} frame_names")
 
     def _resample_command(self, env_ids: torch.Tensor):
+        self._resolve_port_indices()
+        
         if self.pending_targets_idx is not None:
             # Check for pending overrides (where value != -1)
             is_pending = self.pending_targets_idx[env_ids] != -1
             
-            # Use pending target if available
-            self.targets_idx[env_ids[is_pending]] = self.pending_targets_idx[env_ids[is_pending]]
+            # Use pending target if available (interpreted as logical index)
+            if is_pending.any():
+                logical_idx = self.pending_targets_idx[env_ids[is_pending]]
+                self.targets_idx[env_ids[is_pending]] = self._port_indices[logical_idx]
             
             # Randomly select for others
             if (~is_pending).any():
-                self.targets_idx[env_ids[~is_pending]] = torch.randint(0, 2, ((~is_pending).sum(),), device=self.device)
+                rand_logical_idx = torch.randint(0, 2, ((~is_pending).sum(),), device=self.device)
+                self.targets_idx[env_ids[~is_pending]] = self._port_indices[rand_logical_idx]
             
             # Clear pending overrides for the resampled envs
             self.pending_targets_idx[env_ids] = -1
         else:
-            # Randomly select between port 0 (0) and port 1 (1)
-            self.targets_idx[env_ids] = torch.randint(0, 2, (len(env_ids),), device=self.device)
+            # Randomly select between logical port 0 and 1
+            rand_logical_idx = torch.randint(0, 2, (len(env_ids),), device=self.device)
+            self.targets_idx[env_ids] = self._port_indices[rand_logical_idx]
 
         # Immediate update of command buffers for fresh data
         self._update_command()
         self._debug_vis_callback(None)
 
     def _update_command(self):
+        self._resolve_port_indices()
+        
         # Fetch the current relative poses from the sensor
         self.poses_b[:, :3] = self.sensor.data.target_pos_source[torch.arange(self.num_envs), self.targets_idx]
         self.poses_b[:, 3:] = self.sensor.data.target_quat_source[torch.arange(self.num_envs), self.targets_idx]
@@ -87,6 +117,13 @@ class SfpPoseTargetCommand(CommandTerm):
     def command(self) -> torch.Tensor:
         return self.poses_b
     
+    @property
+    def logical_targets_idx(self) -> torch.Tensor:
+        """Returns the logical indices (0 for port_0, 1 for port_1) of the active targets."""
+        self._resolve_port_indices()
+        # Find which logical index each physical index corresponds to
+        # targets_idx contains physical indices. _port_indices contains [p0_phys, p1_phys]
+        return (self.targets_idx == self._port_indices[1]).long()
 
 @configclass
 class SfpPoseTargetCommandCfg(CommandTermCfg):

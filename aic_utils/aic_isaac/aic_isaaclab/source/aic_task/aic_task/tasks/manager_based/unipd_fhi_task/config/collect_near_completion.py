@@ -190,7 +190,7 @@ class StateCollector:
             "robot_joint_vel": robot_joint_vel,
             "robot_root_state": robot_root_state,
             "nic_card_root_state": nic_card_root_state,
-            "target_idx": target_idx.clone(),
+            "target_idx": self.command_term.logical_targets_idx.clone(),
             "success": success.clone(),
             "dist_to_target": dist_to_target.clone()
         }
