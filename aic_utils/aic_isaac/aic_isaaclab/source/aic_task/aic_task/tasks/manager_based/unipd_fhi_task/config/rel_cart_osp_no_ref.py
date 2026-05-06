@@ -129,6 +129,12 @@ class RelCartesianOSPEnv(ManagerBasedRLEnv):
         """Modified step that accumulates delta actions and applies OSC torques."""
         action = action.to(self.device)
 
+        # Clip action to be within [-1, 1] for stability
+        if torch.isnan(action).any():
+            print("[CRITICAL] NaN Action detected!")
+            action = torch.nan_to_num(action, nan=0.0)
+        action = torch.clamp(action, -1.0, 1.0)
+
         # Initialize targets if they don't exist
         if self._target_pos_w is None:
             self._seed_target_from_ee()
@@ -150,6 +156,16 @@ class RelCartesianOSPEnv(ManagerBasedRLEnv):
             
             # 3. Overwrite efforts with OSC output
             self._apply_osc()
+
+            # Check for physics explosions
+            joint_vel = self._robot.data.joint_vel
+            if not torch.isfinite(joint_vel).all():
+                bad_envs = ~torch.isfinite(joint_vel).all(dim=-1)
+                reset_ids = bad_envs.nonzero(as_tuple=False).squeeze(-1)
+                print(f"[CRITICAL] Physics exploded in {len(reset_ids)} envs. Resetting...")
+                self._reset_idx(reset_ids)
+                # Skip the current sim step update for these envs to avoid NaN propagation
+                continue
             
             self.scene.write_data_to_sim()
             self.sim.step(render=False)
@@ -171,6 +187,17 @@ class RelCartesianOSPEnv(ManagerBasedRLEnv):
 
         self.command_manager.compute(dt=self.step_dt)
         self.obs_buf = self.observation_manager.compute(update_history=True)
+
+        # Safety check for policy inputs/outputs
+        # obs_buf is a dict of tensors, reward_buf is a tensor
+        obs_has_nan = any(not torch.isfinite(v).all() for v in self.obs_buf.values())
+        rew_has_nan = not torch.isfinite(self.reward_buf).all()
+        if obs_has_nan or rew_has_nan:
+            print(f"[CRITICAL] Non-finite values! Obs: {obs_has_nan}, Rew: {rew_has_nan}. Sanitizing...")
+            for k in self.obs_buf:
+                # Replace NaN and Inf with 0.0
+                self.obs_buf[k] = torch.nan_to_num(self.obs_buf[k], nan=0.0, posinf=0.0, neginf=0.0)
+            self.reward_buf = torch.nan_to_num(self.reward_buf, nan=0.0, posinf=0.0, neginf=0.0)
 
         return (
             self.obs_buf,
@@ -210,6 +237,9 @@ class RelCartesianOSPEnv(ManagerBasedRLEnv):
 
         # Set OSC command and compute torque
         target_pose = torch.cat([self._target_pos_w, self._target_quat_w], dim=-1)
+        # Ensure target pose is clean (no NaN/Inf)
+        target_pose = torch.nan_to_num(target_pose, nan=0.0, posinf=0.0, neginf=0.0)
+        
         self._osc.set_command(
             command=target_pose,
             current_ee_pose_b=ee_pose,
@@ -223,7 +253,8 @@ class RelCartesianOSPEnv(ManagerBasedRLEnv):
             gravity=gravity,
         )
         
-        # Clamp and apply
+        # Clamp and apply (and sanitize NaNs/Infs)
+        tau_arm = torch.nan_to_num(tau_arm, nan=0.0, posinf=0.0, neginf=0.0)
         tau_arm = tau_arm.clamp(-self.cfg.osc_effort_limit, self.cfg.osc_effort_limit)
         
         num_joints = robot.num_joints
