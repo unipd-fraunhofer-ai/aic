@@ -287,7 +287,7 @@ class RewardsCfg:
 
     insertion_completed = RewTerm(
         func=mdp.insertion_completed,
-        weight=10.0,
+        weight=50.0,
         params={
             "threshold": 0.005,
             "command_name": "sfp_port_pose_command",
@@ -296,29 +296,20 @@ class RewardsCfg:
         },
     )
 
-    insertion_position_error = RewTerm(
-        func=mdp.insertion_position_error,
-        weight=1,
-        params={
-            "command_name": "sfp_port_pose_command",
-            "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-            "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-        },
-    )
     insertion_position_error_tanh = RewTerm(
         func=mdp.insertion_position_error_tanh,
-        weight=1,
+        weight=10,
         params={
-            "std": 0.05,
+            "std": 0.025,
             "command_name": "sfp_port_pose_command",
             "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
             "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
         },
     )
 
-    insertion_pose_error = RewTerm(
-        func=mdp.pose_error,
-        weight=-1.5,
+    insertion_pose_error_exp = RewTerm(
+        func=mdp.pose_error_exp,
+        weight=10,
         params={
             "command_name": "sfp_port_pose_command",
             "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
@@ -416,10 +407,10 @@ class AICTaskBaseEnv(ManagerBasedRLEnvCfg):
         super().__post_init__()
 
         # General settings
-        self.decimation = 4
+        self.decimation = 8
         self.sim.render_interval = self.decimation
         self.episode_length_s = 10.0
-        self.sim.dt = 1.0 / 120.0
+        self.sim.dt = 1.0 / 240.0
 
         # Viewport / video framing.
         self.viewer.origin_type = "env"

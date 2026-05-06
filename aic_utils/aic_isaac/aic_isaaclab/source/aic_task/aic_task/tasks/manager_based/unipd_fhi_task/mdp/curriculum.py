@@ -41,16 +41,10 @@ class modify_reset_prob(ManagerTermBase):
         term_idx = reward_manager.active_terms.index(reward_term_name)
         weight = reward_manager.get_term_cfg(reward_term_name).weight
         
-        # Identify environments that terminated in this step
-        terminated = env.termination_manager.terminated
-        num_terminated = torch.sum(terminated).item()
-
-        if num_terminated > 0:
-            self.terminated_count += num_terminated
-            
-            term_rewards = reward_manager._step_reward[terminated, term_idx]
-            successes = (term_rewards / weight) > 0.5 # Assume sparse reward 0.0/1.0 -> success when > 0
-            self.success_count += torch.sum(successes).item()
+        self.terminated_count += len(env_ids)
+        term_rewards = reward_manager._step_reward[env_ids, term_idx]
+        successes = (term_rewards / weight) > 0.5 # Assume sparse reward 0.0/1.0 -> success when > 0
+        self.success_count += torch.sum(successes).item()
 
         # Get the event term configuration to access current param value
         event_term_cfg = env.event_manager.get_term_cfg(event_term_name)
@@ -59,6 +53,11 @@ class modify_reset_prob(ManagerTermBase):
         # Check if we have reached the total number of environments for evaluation
         if self.terminated_count >= env.num_envs:
             success_rate = self.success_count / self.terminated_count
+            print(f"----------------------------------------")
+            print(f"Success Rate: {success_rate:.2f}")
+            print(f"Current Prob: {current_prob:.2f}")
+            print(f"Cooldown Counter: {self.cooldown_counter}")
+            print(f"----------------------------------------")
 
             # Update the probability if success rate is high enough and cooldown is finished
             if self.cooldown_counter > 0:

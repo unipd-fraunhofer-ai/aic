@@ -26,7 +26,7 @@ def failed_insertion(
     port_sensor_cfg: SceneEntityCfg,
     card_max_xy_offset: float = 0.05,
     below_port_offset: float = 0.04,
-    port_max_xy_offset: float = 0.03,
+    port_max_xy_offset: float = 0.01,
 ) -> torch.Tensor:
     # Get sensors
     tip_sensor: FrameTransformer = env.scene.sensors[tip_sensor_cfg.name]
