@@ -574,6 +574,18 @@ class EmpiricalInsertion_v2(Policy):
 
         while state not in [InsertCableState.DONE, InsertCableState.FAILED]:
             observation = get_observation()
+
+            should_send_command = False
+            command_kwargs = dict(
+                stiffness=stiffness,
+                wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
+                z_offset=z_offset,
+                reset_xy_integrator=True,
+                tilt_roll=roll_angle,
+                tilt_pitch=pitch_angle,
+                tilt_yaw=yaw_angle,
+            )
+
             if tf_initialized:
                 plug_wrench = self.publish_tip_wrench(observation)
                 plug_pose = self.publish_tip_pose()
@@ -597,21 +609,13 @@ class EmpiricalInsertion_v2(Policy):
             elif state == InsertCableState.LOOKUP_TFS:
                 try:
                     port_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
-                        "base_link",
-                        port_frame,
-                        Time(),
+                        "base_link", port_frame, Time()
                     )
-
                     gripper_tip_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
-                        "gripper/tcp",
-                        cable_tip_frame,
-                        Time(),
+                        "gripper/tcp", cable_tip_frame, Time()
                     )
-
                     wrist_tip_tf = self._parent_node._tf_buffer.lookup_transform(
-                        "ati/tool_link",
-                        cable_tip_frame,
-                        Time(),
+                        "ati/tool_link", cable_tip_frame, Time()
                     )
 
                 except TransformException as ex:
@@ -622,54 +626,37 @@ class EmpiricalInsertion_v2(Policy):
                 gripper_tip_transform = gripper_tip_tf_stamped.transform
                 self.T_wrist_tip = transform_to_matrix(wrist_tip_tf.transform)
 
-                port_transform = port_tf_stamped.transform
-                self.get_logger().info(f"port_transform: {port_transform}")
-
                 port_transform = add_noise_to_transform(
-                    port_transform,
+                    port_tf_stamped.transform,
                     pos_std=self.pos_std,
                     rot_std=self.rot_std,
                 )
-
-                self.get_logger().info(f"port_transform with noise: {port_transform}")
 
                 move_above_step = 0
                 tf_initialized = True
                 state = InsertCableState.MOVE_ABOVE_PORT
 
             elif state == InsertCableState.MOVE_ABOVE_PORT:
-
                 interp_fraction = move_above_step / 100.0
-                stiffness = [100.0, 100.0, 100.0, 60., 60., 60.]
-                wrench_feedback_gains_at_tip = [0.] * 3 + [0.] * 3
-                try:
-                    self.set_pose_target(
-                        move_robot=move_robot,
-                        pose=self.calc_gripper_pose(
-                            port_transform,
-                            gripper_tip_transform,
-                            slerp_fraction=interp_fraction,
-                            position_fraction=interp_fraction,
-                            z_offset=z_offset,
-                            reset_xy_integrator=True,
-                            tilt_roll=roll_angle,
-                            tilt_pitch=pitch_angle,
-                        ),
-                        stiffness=stiffness,
-                        wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
-                    )
-                except TransformException as ex:
-                    self.get_logger().warn(
-                        f"TF lookup failed during interpolation: {ex}"
-                    )
 
+                stiffness = [100.0, 100.0, 100.0, 60.0, 60.0, 60.0]
+                wrench_feedback_gains_at_tip = [0.0] * 6
+
+                command_kwargs.update(
+                    stiffness=stiffness,
+                    wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
+                    slerp_fraction=interp_fraction,
+                    position_fraction=interp_fraction,
+                    z_offset=z_offset,
+                    reset_xy_integrator=True,
+                )
+
+                should_send_command = True
                 move_above_step += 1
 
                 if move_above_step >= 100:
                     insertion_start_time = self.time_now()
                     state = InsertCableState.DESCEND_AND_INSERT
-
-                self.sleep_for(0.05)
 
             elif state == InsertCableState.DESCEND_AND_INSERT:
                 contact_detected = plug_wrench.force.z < z_force_threshold
@@ -680,7 +667,6 @@ class EmpiricalInsertion_v2(Policy):
                     )
                     untilt_start_time = self.time_now()
                     state = InsertCableState.STABILIZE_XY
-                    # state = InsertCableState.STABILIZE
                     continue
 
                 if z_offset < -0.015:
@@ -690,60 +676,28 @@ class EmpiricalInsertion_v2(Policy):
                     untilt_start_time = self.time_now()
                     state = InsertCableState.STABILIZE
                     continue
-                else:
-                    z_offset -= 0.001
-                
-                try:
-                    self.set_pose_target(
-                        move_robot=move_robot,
-                        pose=self.calc_gripper_pose(
-                            port_transform,
-                            gripper_tip_transform,
-                            z_offset=z_offset,
-                            reset_xy_integrator=True,
-                            tilt_roll=roll_angle,
-                            tilt_pitch=pitch_angle,
-                        ),
-                        stiffness=stiffness,
-                        wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
-                    )
-                    
-                except TransformException as ex:
-                    self.get_logger().warn(
-                        f"TF lookup failed during interpolation: {ex}"
-                    )
-                self.sleep_for(0.05)
-                    
-                
-            elif state == InsertCableState.STABILIZE_XY:                
-                # roll_done = abs(roll_angle) <= untilt_step
-                # pitch_done = abs(pitch_angle) <= untilt_step
-                # roll_done = True
-                # pitch_done = True
-                
-                # if roll_done and pitch_done:
-                #     if self.time_now() - untilt_start_time > untilt_duration:
-                #         state = InsertCableState.STABILIZE
-                #         continue
-                # else:
-                #     if not roll_done:
-                #         roll_angle -= np.sign(roll_angle) * untilt_step
-                #         pass
 
-                #     if not pitch_done:
-                #         pitch_angle -= np.sign(pitch_angle) * untilt_step
-                #         pass
-                
-                
+                z_offset -= 0.001
+
+                command_kwargs.update(
+                    z_offset=z_offset,
+                    reset_xy_integrator=True,
+                    tilt_roll=roll_angle,
+                    tilt_pitch=pitch_angle,
+                )
+
+                should_send_command = True
+
+            elif state == InsertCableState.STABILIZE_XY:
                 if z_offset < -0.015:
-                    self.get_logger().info(
-                        "Insertion completed."
-                    )
+                    self.get_logger().info("Insertion completed.")
+
                     port_transform.translation.x = plug_pose.pose.position.x
                     port_transform.translation.y = plug_pose.pose.position.y
+
                     if plug_pose.pose.position.z >= 0.1765:
                         self.get_logger().warn(
-                            "Plug tip is not aligned with port. Trying to fix yaw before redescending."
+                            "Plug tip is not aligned with port. Trying to fix yaw."
                         )
                         state = InsertCableState.FIX_YAW
                     else:
@@ -752,187 +706,23 @@ class EmpiricalInsertion_v2(Policy):
                         )
                         state = InsertCableState.UNTILT_INSERTED_CABLE
                     continue
-                else:
-                    z_offset -= 0.001
 
-                self.get_logger().info(
-                    f"untilting: roll={np.rad2deg(roll_angle):0.3f} deg, "
-                    f"pitch={np.rad2deg(pitch_angle):0.3f} deg"
-                )
-
-                try:
-                    wrench_feedback_gains_at_tip = [-0.] * 3 + [-.0] * 3
-                    stiffness= [10,10,90,5,5,5]
-                    # damping= [200,200,200,80,80,80]
-                    self.set_pose_target(
-                        move_robot=move_robot,
-                        pose=self.calc_gripper_pose(
-                            port_transform,
-                            gripper_tip_transform,
-                            z_offset=z_offset,
-                            reset_xy_integrator=True,
-                            tilt_roll=roll_angle,
-                            tilt_pitch=pitch_angle,
-                            # rotate_tcp_in_place=True,
-                        ),
-                        stiffness=stiffness,
-                        wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
-                    )
-                except TransformException as ex:
-                    self.get_logger().warn(
-                        f"TF lookup failed during untilting: {ex}"
-                    )
-
-                self.sleep_for(0.05)
-                
-            elif state == InsertCableState.UNTILT_INSERTED_CABLE:
-                observation = get_observation()
-                roll_done = abs(roll_angle) <= untilt_step 
-                pitch_done = abs(pitch_angle) <= untilt_step
-                # roll_done = True
-                # pitch_done = True
-                
-                # if roll_done and pitch_done:
-                #     if self.time_now() - untilt_start_time > untilt_duration:
-                #         state = InsertCableState.STABILIZE
-                #         continue
-                # else:
-                if not roll_done:
-                    roll_angle -= np.sign(roll_angle) * untilt_step
-                    pass
-
-                if not pitch_done:
-                    pitch_angle -= np.sign(pitch_angle) * untilt_step
-                    pass
-                
-                if roll_done and pitch_done and z_offset >= 0.04:
-                    self.get_logger().info(
-                        "Insertion completed."
-                    )
-                    state = InsertCableState.REDESCEND
-                    continue
-                
-                z_offset += 0.001
-
-                self.get_logger().info(
-                    f"untilting: roll={np.rad2deg(roll_angle):0.3f} deg, "
-                    f"pitch={np.rad2deg(pitch_angle):0.3f} deg, "
-                    f"z_offset={z_offset:.4f} m"
-                )
-
-                try:
-                    wrench_feedback_gains_at_tip = [0.] * 3 + [-.0] * 3
-                    stiffness= [90,90,200,50,50,200]
-                    # damping= [200,200,200,80,80,80]
-                    self.set_pose_target(
-                        move_robot=move_robot,
-                        pose=self.calc_gripper_pose(
-                            port_transform,
-                            gripper_tip_transform,
-                            z_offset=z_offset,
-                            reset_xy_integrator=True,
-                            tilt_roll=roll_angle,
-                            tilt_pitch=pitch_angle,
-                            tilt_yaw=yaw_angle,
-                            # rotate_tcp_in_place=True,
-                        ),
-                        stiffness=stiffness,
-                        wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
-                    )
-                except TransformException as ex:
-                    self.get_logger().warn(
-                        f"TF lookup failed during untilting: {ex}"
-                    )
-
-                self.sleep_for(0.05)
-                
-            elif state == InsertCableState.REDESCEND:
                 z_offset -= 0.001
 
-                self.get_logger().info(
-                    f"redescending: z_offset={z_offset:.4f} m"
+                stiffness = [10, 10, 90, 5, 5, 5]
+                wrench_feedback_gains_at_tip = [0.0] * 6
+
+                command_kwargs.update(
+                    stiffness=stiffness,
+                    wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
+                    z_offset=z_offset,
+                    reset_xy_integrator=True,
+                    tilt_roll=roll_angle,
+                    tilt_pitch=pitch_angle,
                 )
 
-                try:
-                    wrench_feedback_gains_at_tip = [0.] * 3 + [-.0] * 2 + [-.0]
-                    stiffness= [90,90,90,200,200,200]
-                    # damping= [200,200,200,80,80,80]
-                    self.set_pose_target(
-                        move_robot=move_robot,
-                        pose=self.calc_gripper_pose(
-                            port_transform,
-                            gripper_tip_transform,
-                            z_offset=z_offset,
-                            reset_xy_integrator=True,
-                            tilt_roll=roll_angle,
-                            tilt_pitch=pitch_angle,
-                            tilt_yaw=yaw_angle,
-                            # rotate_tcp_in_place=True,
-                        ),
-                        stiffness=stiffness,
-                        wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
-                    )
-                except TransformException as ex:
-                    self.get_logger().warn(
-                        f"TF lookup failed during redescending: {ex}"
-                    )
+                should_send_command = True
 
-                if z_offset < -0.015:
-                    self.get_logger().info(
-                        "Redescend completed."
-                    )
-                    state = InsertCableState.STABILIZE
-                    continue
-
-                self.sleep_for(0.05)
-                
-            # elif state == InsertCableState.FIX_YAW:
-            #     self.get_logger().info(f"Fixing yaw, yaw angle={np.rad2deg(yaw_angle):.2f} deg")
-            #     yaw_done = yaw_angle >= np.deg2rad(5) 
-            #     plug_inserted = plug_pose.pose.position.z < 0.1765
-                
-            #     if plug_inserted:
-            #         self.get_logger().info(
-            #             "Yaw fixed."
-            #         )
-            #         # self.sleep_for(2.0)
-            #         state = InsertCableState.REDESCEND
-            #         continue
-            #     elif not plug_inserted and not yaw_done: 
-            #         yaw_angle += np.deg2rad(0.01)
-                
-            #     elif not plug_inserted and yaw_done:
-            #         self.get_logger().warn(
-            #             "Yaw adjustment did not work. Proceeding with untilting."
-            #         )
-            #         # self.sleep_for(2.0)
-            #         state = InsertCableState.REDESCEND
-            #         continue
-                    
-            #     try:
-            #         wrench_feedback_gains_at_tip = [0.] * 3 + [-.0] * 3 
-            #         stiffness= [10,10,90,50,50,200]
-            #         # damping= [200,200,200,80,80,80]
-            #         self.set_pose_target(
-            #             move_robot=move_robot,
-            #             pose=self.calc_gripper_pose(
-            #                 port_transform,
-            #                 gripper_tip_transform,
-            #                 z_offset=z_offset,
-            #                 reset_xy_integrator=False,
-            #                 tilt_roll=roll_angle,
-            #                 tilt_pitch=pitch_angle,
-            #                 tilt_yaw=yaw_angle,
-            #                 # rotate_tcp_in_place=True,
-            #             ),
-            #             stiffness=stiffness,
-            #             wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
-            #         )
-            #     except TransformException as ex:
-            #         self.get_logger().warn(
-            #             f"TF lookup failed during redescending: {ex}"
-            #         )
-                    
             elif state == InsertCableState.FIX_YAW:
                 current_z = plug_pose.pose.position.z
                 plug_inserted = current_z < 0.1765
@@ -941,16 +731,6 @@ class EmpiricalInsertion_v2(Policy):
                     fix_yaw_start_z = current_z
                     fix_yaw_best_z = current_z
                     fix_yaw_no_improve_steps = 0
-                    self.get_logger().info(
-                        f"Starting yaw fix attempt {fix_yaw_attempt + 1}/"
-                        f"{fix_yaw_max_attempts}, direction={fix_yaw_direction:+.0f}"
-                    )
-
-                self.get_logger().info(
-                    f"Fixing yaw: yaw={np.rad2deg(yaw_angle):.2f} deg, "
-                    f"z={current_z:.4f}, best_z={fix_yaw_best_z:.4f}, "
-                    f"direction={fix_yaw_direction:+.0f}"
-                )
 
                 if plug_inserted:
                     self.get_logger().info("Yaw fixed.")
@@ -958,7 +738,6 @@ class EmpiricalInsertion_v2(Policy):
                     state = InsertCableState.UNTILT_INSERTED_CABLE
                     continue
 
-                # Lower z is better here.
                 if current_z < fix_yaw_best_z - fix_yaw_min_z_improvement:
                     fix_yaw_best_z = current_z
                     fix_yaw_no_improve_steps = 0
@@ -970,64 +749,129 @@ class EmpiricalInsertion_v2(Policy):
                 yaw_limit_reached = abs(yaw_angle) >= fix_yaw_limit
                 no_improvement = fix_yaw_no_improve_steps >= fix_yaw_max_no_improve_steps
 
-                if yaw_limit_reached or no_improvement: #or np.abs(plug_wrench.torque.z) > 6:
+                if yaw_limit_reached or no_improvement:
                     fix_yaw_attempt += 1
 
                     if fix_yaw_attempt < fix_yaw_max_attempts:
-                        self.get_logger().warn(
-                            "Yaw did not improve insertion. Trying opposite direction."
-                        )
-
                         fix_yaw_direction *= -1.0
-                        # yaw_angle = 0.0
                         fix_yaw_start_z = None
                         fix_yaw_best_z = None
                         fix_yaw_no_improve_steps = 0
                         continue
 
-                    else:
-                        self.get_logger().error(
-                            "Yaw adjustment failed in both directions."
-                        )
-                        state = InsertCableState.UNTILT_INSERTED_CABLE
-                        continue
+                    self.get_logger().error("Yaw adjustment failed in both directions.")
+                    state = InsertCableState.UNTILT_INSERTED_CABLE
+                    continue
 
-                try:
-                    wrench_feedback_gains_at_tip = [0.] * 3 + [-.0] * 3
-                    stiffness = [90, 90, 90, 50, 50, 200]
+                stiffness = [90, 90, 90, 50, 50, 200]
+                wrench_feedback_gains_at_tip = [0.0] * 6
 
-                    self.set_pose_target(
-                        move_robot=move_robot,
-                        pose=self.calc_gripper_pose(
-                            port_transform,
-                            gripper_tip_transform,
-                            z_offset=z_offset,
-                            reset_xy_integrator=True,
-                            tilt_roll=roll_angle,
-                            tilt_pitch=pitch_angle,
-                            tilt_yaw=yaw_angle,
-                        ),
-                        stiffness=stiffness,
-                        wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
-                    )
-                    self.sleep_for(0.05)
+                command_kwargs.update(
+                    stiffness=stiffness,
+                    wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
+                    z_offset=z_offset,
+                    reset_xy_integrator=True,
+                    tilt_roll=roll_angle,
+                    tilt_pitch=pitch_angle,
+                    tilt_yaw=yaw_angle,
+                )
 
-                except TransformException as ex:
-                    self.get_logger().warn(
-                        f"TF lookup failed during yaw fixing: {ex}"
-                    )
+                should_send_command = True
+
+            elif state == InsertCableState.UNTILT_INSERTED_CABLE:
+                roll_done = abs(roll_angle) <= untilt_step
+                pitch_done = abs(pitch_angle) <= untilt_step
+
+                if not roll_done:
+                    roll_angle -= np.sign(roll_angle) * untilt_step
+
+                if not pitch_done:
+                    pitch_angle -= np.sign(pitch_angle) * untilt_step
+
+                if roll_done and pitch_done and z_offset >= 0.04:
+                    state = InsertCableState.REDESCEND
+                    continue
+
+                z_offset += 0.001
+
+                stiffness = [90, 90, 200, 50, 50, 200]
+                wrench_feedback_gains_at_tip = [0.0] * 6
+
+                command_kwargs.update(
+                    stiffness=stiffness,
+                    wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
+                    z_offset=z_offset,
+                    reset_xy_integrator=True,
+                    tilt_roll=roll_angle,
+                    tilt_pitch=pitch_angle,
+                    tilt_yaw=yaw_angle,
+                )
+
+                should_send_command = True
+
+            elif state == InsertCableState.REDESCEND:
+                z_offset -= 0.001
+
+                stiffness = [90, 90, 90, 200, 200, 200]
+                wrench_feedback_gains_at_tip = [0.0] * 6
+
+                command_kwargs.update(
+                    stiffness=stiffness,
+                    wrench_feedback_gains_at_tip=wrench_feedback_gains_at_tip,
+                    z_offset=z_offset,
+                    reset_xy_integrator=True,
+                    tilt_roll=roll_angle,
+                    tilt_pitch=pitch_angle,
+                    tilt_yaw=yaw_angle,
+                )
+
+                should_send_command = True
+
+                if z_offset < -0.015:
+                    self.get_logger().info("Redescend completed.")
+                    state = InsertCableState.STABILIZE
+                    continue
 
             elif state == InsertCableState.STABILIZE:
                 self.get_logger().info("Waiting for connector to stabilize...")
-                stabilize_step +=1 
+                stabilize_step += 1
+
                 if stabilize_step > target_stabilize_steps:
                     state = InsertCableState.DONE
-                self.sleep_for(0.05)
 
-        if state == InsertCableState.FAILED:
-            self.get_logger().error("CheatCode.insert_cable() failed.")
-            return False
+            # ---------------------------------------------------------
+            # Single command sending point
+            # ---------------------------------------------------------
+            if should_send_command:
+                try:
+                    pose = self.calc_gripper_pose(
+                        port_transform,
+                        gripper_tip_transform,
+                        slerp_fraction=command_kwargs.get("slerp_fraction", 1.0),
+                        position_fraction=command_kwargs.get("position_fraction", 1.0),
+                        z_offset=command_kwargs["z_offset"],
+                        reset_xy_integrator=command_kwargs["reset_xy_integrator"],
+                        tilt_roll=command_kwargs["tilt_roll"],
+                        tilt_pitch=command_kwargs["tilt_pitch"],
+                        tilt_yaw=command_kwargs["tilt_yaw"],
+                    )
 
+                    self.set_pose_target(
+                        move_robot=move_robot,
+                        pose=pose,
+                        stiffness=command_kwargs["stiffness"],
+                        wrench_feedback_gains_at_tip=command_kwargs[
+                            "wrench_feedback_gains_at_tip"
+                        ],
+                    )
+
+                except TransformException as ex:
+                    self.get_logger().warn(
+                        f"TF lookup failed in state {state.name}: {ex}"
+                    )
+
+            self.sleep_for(0.05)
+        
         self.get_logger().info("CheatCode.insert_cable() exiting...")
         return True
     
