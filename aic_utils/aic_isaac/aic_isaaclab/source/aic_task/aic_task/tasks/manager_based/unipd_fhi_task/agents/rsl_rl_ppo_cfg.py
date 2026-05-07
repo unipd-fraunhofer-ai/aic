@@ -14,15 +14,16 @@ from isaaclab_rl.rsl_rl import (
 
 @configclass
 class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
+    seed = 42
     num_steps_per_env = 32
-    max_iterations = 10000
-    save_interval = 50
+    max_iterations = 50000
+    save_interval = 100
     experiment_name = "unipd_fhi_task"
-    empirical_normalization = True
     policy = RslRlPpoActorCriticCfg(
-        init_noise_std=1.0,
-        actor_obs_normalization=False,
-        critic_obs_normalization=False,
+        init_noise_std=0.2,
+        state_dependent_std=False,
+        actor_obs_normalization=True,
+        critic_obs_normalization=True,
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
@@ -31,13 +32,13 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
-        entropy_coef=0.005,
+        entropy_coef=0.001,
         num_learning_epochs=5,
-        num_mini_batches=4,
+        num_mini_batches=8,
         learning_rate=5.0e-4,
         schedule="adaptive",
         gamma=0.99,
         lam=0.95,
-        desired_kl=0.01,
+        desired_kl=0.008,
         max_grad_norm=1.0,
     )

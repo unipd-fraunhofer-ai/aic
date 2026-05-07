@@ -35,7 +35,7 @@ class RelCartesianOSPNoRefEnvCfg(AICTaskBaseEnv):
         "wrist_2_joint",
         "wrist_3_joint",
     ]
-    osc_stiffness: tuple[float, ...] = (300.0, 300.0, 300.0, 20.0, 20.0, 20.0)
+    osc_stiffness: tuple[float, ...] = (90.0, 90.0, 90.0, 20.0, 20.0, 20.0)
     osc_damping: tuple[float, ...] = (35.0, 35.0, 35.0, 9.0, 9.0, 9.0)
     osc_inertial_dynamics_decoupling: bool = False
     osc_gravity_compensation: bool = True
