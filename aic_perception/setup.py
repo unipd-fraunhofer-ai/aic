@@ -25,6 +25,9 @@ setup(
     entry_points={
         'console_scripts': [
             'simple_node = aic_perception.simple_node:main',
+            'test_camera_node = aic_perception.test_camera_node:main',
+            'yolo_wrapper_node = aic_perception.yolo_wrapper_node:main',
+            'pose_estimator_node = aic_perception.pose_estimator_node:main',
         ],
     },
 )
