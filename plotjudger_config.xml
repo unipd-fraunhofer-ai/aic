@@ -1,0 +1,639 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<root>
+ <tabbed_widget parent="main_window" name="Main Window">
+  <Tab tab_name="tcp pose" containers="1">
+   <Container>
+    <DockSplitter sizes="1" count="1" orientation="-">
+     <DockSplitter sizes="0.5;0.5" count="2" orientation="|">
+      <DockSplitter sizes="0.346413;0.346413;0.307175" count="3" orientation="-">
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="-0.370642" left="0.000000" right="115.781696" bottom="-0.394787"/>
+         <limitY/>
+         <curve color="#f14cc1" name="/observations/controller_state/reference_tcp_pose/position/x"/>
+         <curve color="#ff7f0e" name="/observations/controller_state/tcp_pose/position/x"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="0.226476" left="0.000000" right="115.781696" bottom="0.192728"/>
+         <limitY/>
+         <curve color="#9467bd" name="/observations/controller_state/reference_tcp_pose/position/y"/>
+         <curve color="#f14cc1" name="/observations/controller_state/tcp_pose/position/y"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="0.343725" left="0.000000" right="115.781696" bottom="0.170596"/>
+         <limitY/>
+         <curve color="#17becf" name="/observations/controller_state/reference_tcp_pose/position/z"/>
+         <curve color="#9467bd" name="/observations/controller_state/tcp_pose/position/z"/>
+        </plot>
+       </DockArea>
+      </DockSplitter>
+      <DockSplitter sizes="0.250281;0.250281;0.249158;0.250281" count="4" orientation="-">
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="0.188675" left="0.000000" right="115.781696" bottom="-0.004633"/>
+         <limitY/>
+         <curve color="#1f77b4" name="/observations/controller_state/reference_tcp_pose/orientation/w"/>
+         <curve color="#bcbd22" name="/observations/controller_state/tcp_pose/orientation/w"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="1.000437" left="0.000000" right="115.781696" bottom="0.982071"/>
+         <limitY/>
+         <curve color="#d62728" name="/observations/controller_state/reference_tcp_pose/orientation/x"/>
+         <curve color="#1f77b4" name="/observations/controller_state/tcp_pose/orientation/x"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="0.000944" left="0.000000" right="115.781696" bottom="-0.035445"/>
+         <limitY/>
+         <curve color="#1ac938" name="/observations/controller_state/reference_tcp_pose/orientation/y"/>
+         <curve color="#d62728" name="/observations/controller_state/tcp_pose/orientation/y"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="0.081975" left="0.000000" right="115.781696" bottom="-0.007039"/>
+         <limitY/>
+         <curve color="#ff7f0e" name="/observations/controller_state/reference_tcp_pose/orientation/z"/>
+         <curve color="#1ac938" name="/observations/controller_state/tcp_pose/orientation/z"/>
+        </plot>
+       </DockArea>
+      </DockSplitter>
+     </DockSplitter>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <Tab tab_name="tcp orientation" containers="1">
+   <Container>
+    <DockSplitter sizes="0.33296;0.334081;0.33296" count="3" orientation="-">
+     <DockArea name="...">
+      <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+       <range top="188.999675" left="0.000000" right="115.781696" bottom="-188.999496"/>
+       <limitY/>
+       <curve color="#bcbd22" name="roll"/>
+       <curve color="#d62728" name="ref_roll"/>
+      </plot>
+     </DockArea>
+     <DockArea name="...">
+      <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+       <range top="0.256338" left="0.000000" right="115.781696" bottom="-9.732138"/>
+       <limitY/>
+       <curve color="#1ac938" name="ref_pitch"/>
+       <curve color="#ff7f0e" name="pitch"/>
+      </plot>
+     </DockArea>
+     <DockArea name="...">
+      <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+       <range top="0.089846" left="0.000000" right="115.781696" bottom="-3.311020"/>
+       <limitY/>
+       <curve color="#d62728" name="yaw"/>
+       <curve color="#1f77b4" name="ref_yaw"/>
+      </plot>
+     </DockArea>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <Tab tab_name="wrench_corrected" containers="1">
+   <Container>
+    <DockSplitter sizes="1" count="1" orientation="-">
+     <DockSplitter sizes="0.5;0.5" count="2" orientation="|">
+      <DockSplitter sizes="0.346413;0.346413;0.307175" count="3" orientation="-">
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="12.229063" left="0.000000" right="115.781696" bottom="-2.429542"/>
+         <limitY/>
+         <curve color="#1ac938" name="x_force_diff"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="3.855145" left="0.000000" right="115.781696" bottom="-14.837555"/>
+         <limitY/>
+         <curve color="#ff7f0e" name="y_force_diff"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="1.779586" left="0.000000" right="115.781696" bottom="-11.917387"/>
+         <limitY/>
+         <curve color="#f14cc1" name="z_force_diff"/>
+        </plot>
+       </DockArea>
+      </DockSplitter>
+      <DockSplitter sizes="0.33296;0.334081;0.33296" count="3" orientation="-">
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="16.432274" left="0.000000" right="115.781696" bottom="-1.082850"/>
+         <limitY/>
+         <curve color="#9467bd" name="x_torque_diff"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="13.983307" left="0.000000" right="115.781696" bottom="-1.061735"/>
+         <limitY/>
+         <curve color="#17becf" name="y_torque_diff"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="4.287143" left="0.000000" right="115.781696" bottom="-0.199883"/>
+         <limitY/>
+         <curve color="#bcbd22" name="z_torque_diff"/>
+        </plot>
+       </DockArea>
+      </DockSplitter>
+     </DockSplitter>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <Tab tab_name="wrist wrench" containers="1">
+   <Container>
+    <DockSplitter sizes="1" count="1" orientation="-">
+     <DockSplitter sizes="0.5;0.5" count="2" orientation="|">
+      <DockSplitter sizes="0.346413;0.346413;0.307175" count="3" orientation="-">
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="9.383761" left="0.000000" right="115.781696" bottom="-5.274799"/>
+         <limitY/>
+         <curve color="#17becf" name="/observations/wrist_wrench/wrench/force/x"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="1.445248" left="0.000000" right="115.781696" bottom="-18.149403"/>
+         <limitY/>
+         <curve color="#bcbd22" name="/observations/wrist_wrench/wrench/force/y"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="21.484748" left="0.000000" right="115.781696" bottom="7.390386"/>
+         <limitY/>
+         <curve color="#1f77b4" name="/observations/wrist_wrench/wrench/force/z"/>
+        </plot>
+       </DockArea>
+      </DockSplitter>
+      <DockSplitter sizes="0.33296;0.334081;0.33296" count="3" orientation="-">
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="16.571818" left="0.000000" right="115.781696" bottom="-0.943321"/>
+         <limitY/>
+         <curve color="#d62728" name="/observations/wrist_wrench/wrench/torque/x"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="13.867807" left="0.000000" right="115.781696" bottom="-1.177247"/>
+         <limitY/>
+         <curve color="#1ac938" name="/observations/wrist_wrench/wrench/torque/y"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="4.239691" left="0.000000" right="115.781696" bottom="-0.247362"/>
+         <limitY/>
+         <curve color="#ff7f0e" name="/observations/wrist_wrench/wrench/torque/z"/>
+        </plot>
+       </DockArea>
+      </DockSplitter>
+     </DockSplitter>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <Tab tab_name="wrench_tare_offset" containers="1">
+   <Container>
+    <DockSplitter sizes="1" count="1" orientation="-">
+     <DockSplitter sizes="0.5;0.5" count="2" orientation="|">
+      <DockSplitter sizes="0.346413;0.346413;0.307175" count="3" orientation="-">
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="0.492783" left="0.000000" right="115.781696" bottom="-2.927272"/>
+         <limitY/>
+         <curve color="#f14cc1" name="/observations/controller_state/fts_tare_offset/wrench/force/x"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="0.558934" left="0.000000" right="115.781696" bottom="-6.943002"/>
+         <limitY/>
+         <curve color="#9467bd" name="/observations/controller_state/fts_tare_offset/wrench/force/y"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="19.830752" left="0.000000" right="115.781696" bottom="18.576602"/>
+         <limitY/>
+         <curve color="#17becf" name="/observations/controller_state/fts_tare_offset/wrench/force/z"/>
+        </plot>
+       </DockArea>
+      </DockSplitter>
+      <DockSplitter sizes="0.33296;0.334081;0.33296" count="3" orientation="-">
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="0.140071" left="0.000000" right="115.781696" bottom="0.134064"/>
+         <limitY/>
+         <curve color="#bcbd22" name="/observations/controller_state/fts_tare_offset/wrench/torque/x"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="-0.096182" left="0.000000" right="115.781696" bottom="-0.115993"/>
+         <limitY/>
+         <curve color="#1f77b4" name="/observations/controller_state/fts_tare_offset/wrench/torque/y"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="-0.046408" left="0.000000" right="115.781696" bottom="-0.088837"/>
+         <limitY/>
+         <curve color="#d62728" name="/observations/controller_state/fts_tare_offset/wrench/torque/z"/>
+        </plot>
+       </DockArea>
+      </DockSplitter>
+     </DockSplitter>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <Tab tab_name="plug_wrench" containers="1">
+   <Container>
+    <DockSplitter sizes="1" count="1" orientation="-">
+     <DockSplitter sizes="0.5;0.5" count="2" orientation="|">
+      <DockSplitter sizes="0.346413;0.346413;0.307175" count="3" orientation="-">
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="13.006955" left="3.305171" right="62.014973" bottom="-2.178544"/>
+         <limitY/>
+         <curve color="#1f77b4" name="/plug_wrench/wrench/force/x"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="1.171469" left="3.305171" right="62.014973" bottom="-14.239258"/>
+         <limitY/>
+         <curve color="#d62728" name="/plug_wrench/wrench/force/y"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="3.307145" left="3.305171" right="62.014973" bottom="-10.977839"/>
+         <limitY/>
+         <curve color="#1ac938" name="/plug_wrench/wrench/force/z"/>
+        </plot>
+       </DockArea>
+      </DockSplitter>
+      <DockSplitter sizes="0.33296;0.334081;0.33296" count="3" orientation="-">
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="15.080187" left="3.305171" right="62.014973" bottom="-0.881274"/>
+         <limitY/>
+         <curve color="#ff7f0e" name="/plug_wrench/wrench/torque/x"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="14.181781" left="3.305171" right="62.014973" bottom="-1.194836"/>
+         <limitY/>
+         <curve color="#f14cc1" name="/plug_wrench/wrench/torque/y"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="0.490382" left="3.305171" right="62.014973" bottom="-1.030229"/>
+         <limitY/>
+         <curve color="#9467bd" name="/plug_wrench/wrench/torque/z"/>
+        </plot>
+       </DockArea>
+      </DockSplitter>
+     </DockSplitter>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <Tab tab_name="plug_pose" containers="1">
+   <Container>
+    <DockSplitter sizes="1" count="1" orientation="-">
+     <DockSplitter sizes="0.5;0.5" count="2" orientation="|">
+      <DockSplitter sizes="0.33296;0.334081;0.33296" count="3" orientation="-">
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="-0.371410" left="3.305514" right="62.015021" bottom="-0.384615"/>
+         <limitY/>
+         <curve color="#ff7f0e" name="/plug_pose/pose/position/x"/>
+         <curve color="#d62728" name="/plug_reference_pose/pose/position/x"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="0.225680" left="3.305514" right="62.015021" bottom="0.212469"/>
+         <limitY/>
+         <curve color="#f14cc1" name="/plug_pose/pose/position/y"/>
+         <curve color="#1ac938" name="/plug_reference_pose/pose/position/y"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="0.287601" left="3.305514" right="62.015021" bottom="0.114351"/>
+         <limitY/>
+         <curve color="#9467bd" name="/plug_pose/pose/position/z"/>
+         <curve color="#ff7f0e" name="/plug_reference_pose/pose/position/z"/>
+        </plot>
+       </DockArea>
+      </DockSplitter>
+      <DockSplitter sizes="0.33296;0.334081;0.33296" count="3" orientation="-">
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="188.990789" left="3.305514" right="62.015021" bottom="-188.959738"/>
+         <limitY/>
+         <curve color="#1ac938" name="plug_roll_deg"/>
+         <curve color="#9467bd" name="plug_ref_roll_deg"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="0.250810" left="3.305514" right="62.015021" bottom="-10.283197"/>
+         <limitY/>
+         <curve color="#ff7f0e" name="plug_pitch_deg"/>
+         <curve color="#17becf" name="plug_ref_pitch_deg"/>
+        </plot>
+       </DockArea>
+       <DockArea name="...">
+        <plot flip_x="false" line_width="1.0" flip_y="false" mode="TimeSeries">
+         <range top="3.068699" left="3.305514" right="62.015021" bottom="-0.115090"/>
+         <limitY/>
+         <curve color="#f14cc1" name="plug_yaw_deg"/>
+         <curve color="#bcbd22" name="plug_ref_yaw_deg"/>
+        </plot>
+       </DockArea>
+      </DockSplitter>
+     </DockSplitter>
+    </DockSplitter>
+   </Container>
+  </Tab>
+  <currentTabIndex index="6"/>
+ </tabbed_widget>
+ <use_relative_time_offset enabled="1"/>
+ <!-- - - - - - - - - - - - - - - -->
+ <!-- - - - - - - - - - - - - - - -->
+ <Plugins>
+  <plugin ID="DataLoad CSV">
+   <parameters time_axis="" delimiter="0"/>
+  </plugin>
+  <plugin ID="DataLoad MCAP"/>
+  <plugin ID="DataLoad ROS2 bags">
+   <use_header_stamp value="false"/>
+   <discard_large_arrays value="true"/>
+   <max_array_size value="100"/>
+   <boolean_strings_to_number value="true"/>
+   <remove_suffix_from_strings value="true"/>
+   <selected_topics value=""/>
+  </plugin>
+  <plugin ID="DataLoad ULog"/>
+  <plugin ID="ROS2 Topic Subscriber">
+   <use_header_stamp value="false"/>
+   <discard_large_arrays value="true"/>
+   <max_array_size value="100"/>
+   <boolean_strings_to_number value="true"/>
+   <remove_suffix_from_strings value="true"/>
+   <selected_topics value="/observations;/plug_wrench;/plug_pose;/plug_reference_pose"/>
+  </plugin>
+  <plugin ID="UDP Server"/>
+  <plugin ID="WebSocket Server"/>
+  <plugin ID="ZMQ Subscriber"/>
+  <plugin ID="Fast Fourier Transform"/>
+  <plugin ID="Quaternion to RPY"/>
+  <plugin ID="Reactive Script Editor">
+   <library code="--[[ Helper function to create a series from arrays&#xa;&#xa; new_series: a series previously created with ScatterXY.new(name)&#xa; prefix:     prefix of the timeseries, before the index of the array&#xa; suffix_X:   suffix to complete the name of the series containing the X value. If [nil], use the index of the array.&#xa; suffix_Y:   suffix to complete the name of the series containing the Y value&#xa; timestamp:   usually the tracker_time variable&#xa;              &#xa; Example:&#xa; &#xa; Assuming we have multiple series in the form:&#xa; &#xa;   /trajectory/node.{X}/position/x&#xa;   /trajectory/node.{X}/position/y&#xa;   &#xa; where {N} is the index of the array (integer). We can create a reactive series from the array with:&#xa; &#xa;   new_series = ScatterXY.new(&quot;my_trajectory&quot;) &#xa;   CreateSeriesFromArray( new_series, &quot;/trajectory/node&quot;, &quot;position/x&quot;, &quot;position/y&quot;, tracker_time );&#xa;--]]&#xa;&#xa;function CreateSeriesFromArray( new_series, prefix, suffix_X, suffix_Y, timestamp )&#xa;  &#xa;  --- clear previous values&#xa;  new_series:clear()&#xa;  &#xa;  --- Append points to new_series&#xa;  index = 0&#xa;  while(true) do&#xa;&#xa;    x = index;&#xa;    -- if not nil, get the X coordinate from a series&#xa;    if suffix_X ~= nil then &#xa;      series_x = TimeseriesView.find( string.format( &quot;%s.%d/%s&quot;, prefix, index, suffix_X) )&#xa;      if series_x == nil then break end&#xa;      x = series_x:atTime(timestamp)&#x9; &#xa;    end&#xa;    &#xa;    series_y = TimeseriesView.find( string.format( &quot;%s.%d/%s&quot;, prefix, index, suffix_Y) )&#xa;    if series_y == nil then break end &#xa;    y = series_y:atTime(timestamp)&#xa;    &#xa;    new_series:push_back(x,y)&#xa;    index = index+1&#xa;  end&#xa;end&#xa;&#xa;--[[ Similar to the built-in function GetSeriesNames(), but select only the names with a give prefix. --]]&#xa;&#xa;function GetSeriesNamesByPrefix(prefix)&#xa;  -- GetSeriesNames(9 is a built-in function&#xa;  all_names = GetSeriesNames()&#xa;  filtered_names = {}&#xa;  for i, name in ipairs(all_names)  do&#xa;    -- check the prefix&#xa;    if name:find(prefix, 1, #prefix) then&#xa;      table.insert(filtered_names, name);&#xa;    end&#xa;  end&#xa;  return filtered_names&#xa;end&#xa;&#xa;--[[ Modify an existing series, applying offsets to all their X and Y values&#xa;&#xa; series: an existing timeseries, obtained with TimeseriesView.find(name)&#xa; delta_x: offset to apply to each x value&#xa; delta_y: offset to apply to each y value &#xa;  &#xa;--]]&#xa;&#xa;function ApplyOffsetInPlace(series, delta_x, delta_y)&#xa;  -- use C++ indices, not Lua indices&#xa;  for index=0, series:size()-1 do&#xa;    x,y = series:at(index)&#xa;    series:set(index, x + delta_x, y + delta_y)&#xa;  end&#xa;end&#xa;"/>
+   <scripts/>
+  </plugin>
+  <plugin ID="CSV Exporter"/>
+  <plugin ID="ROS2 Topic Re-Publisher"/>
+ </Plugins>
+ <!-- - - - - - - - - - - - - - - -->
+ <previouslyLoaded_Datafiles/>
+ <!-- - - - - - - - - - - - - - - -->
+ <customMathEquations>
+  <snippet name="plug_ref_pitch_deg">
+   <global></global>
+   <function>return value*180/3.14159</function>
+   <linked_source>/plug_reference_pose/pose/orientation/pitch</linked_source>
+  </snippet>
+  <snippet name="plug_ref_roll_deg">
+   <global></global>
+   <function>return value*180/3.14159</function>
+   <linked_source>/plug_reference_pose/pose/orientation/roll</linked_source>
+  </snippet>
+  <snippet name="plug_yaw_deg">
+   <global></global>
+   <function>return value*180/3.14159</function>
+   <linked_source>/plug_pose/pose/orientation/yaw</linked_source>
+  </snippet>
+  <snippet name="plug_pitch_deg">
+   <global></global>
+   <function>return value*180/3.14159</function>
+   <linked_source>/plug_pose/pose/orientation/pitch</linked_source>
+  </snippet>
+  <snippet name="y_torque_diff">
+   <global></global>
+   <function>x = value
+y = v1
+
+return x - y</function>
+   <linked_source>/observations/wrist_wrench/wrench/torque/y</linked_source>
+   <additional_sources>
+    <v1>/observations/controller_state/fts_tare_offset/wrench/torque/y</v1>
+   </additional_sources>
+  </snippet>
+  <snippet name="y_force_diff">
+   <global></global>
+   <function>x = value
+y = v1
+
+return x - y</function>
+   <linked_source>/observations/wrist_wrench/wrench/force/y</linked_source>
+   <additional_sources>
+    <v1>/observations/controller_state/fts_tare_offset/wrench/force/y</v1>
+   </additional_sources>
+  </snippet>
+  <snippet name="z_force_diff">
+   <global></global>
+   <function>x = value
+y = v1
+
+return x - y</function>
+   <linked_source>/observations/wrist_wrench/wrench/force/z</linked_source>
+   <additional_sources>
+    <v1>/observations/controller_state/fts_tare_offset/wrench/force/z</v1>
+   </additional_sources>
+  </snippet>
+  <snippet name="x_force_diff">
+   <global></global>
+   <function>x = value
+y = v1
+
+return x - y</function>
+   <linked_source>/observations/wrist_wrench/wrench/force/x</linked_source>
+   <additional_sources>
+    <v1>/observations/controller_state/fts_tare_offset/wrench/force/x</v1>
+   </additional_sources>
+  </snippet>
+  <snippet name="pitch">
+   <global></global>
+   <function>w = value
+x = v1
+y = v2
+z = v3
+
+dcm20 = 2 * (x * z - w * y)
+
+pitch = math.asin(-dcm20)
+
+return pitch * 57.29577951308232</function>
+   <linked_source>/observations/controller_state/tcp_pose/orientation/w</linked_source>
+   <additional_sources>
+    <v1>/observations/controller_state/tcp_pose/orientation/x</v1>
+    <v2>/observations/controller_state/tcp_pose/orientation/y</v2>
+    <v3>/observations/controller_state/tcp_pose/orientation/z</v3>
+   </additional_sources>
+  </snippet>
+  <snippet name="plug_ref_yaw_deg">
+   <global></global>
+   <function>return value*180/3.14159</function>
+   <linked_source>/plug_reference_pose/pose/orientation/yaw</linked_source>
+  </snippet>
+  <snippet name="z_torque_diff">
+   <global></global>
+   <function>x = value
+y = v1
+
+return x - y</function>
+   <linked_source>/observations/wrist_wrench/wrench/torque/z</linked_source>
+   <additional_sources>
+    <v1>/observations/controller_state/fts_tare_offset/wrench/torque/z</v1>
+   </additional_sources>
+  </snippet>
+  <snippet name="roll">
+   <global></global>
+   <function>w = value
+x = v1
+y = v2
+z = v3
+
+dcm21 = 2 * (w * x + y * z)
+dcm22 = w*w - x*x - y*y + z*z
+
+roll = math.atan(dcm21, dcm22)
+
+return roll * 57.29577951308232</function>
+   <linked_source>/observations/controller_state/tcp_pose/orientation/w</linked_source>
+   <additional_sources>
+    <v1>/observations/controller_state/tcp_pose/orientation/x</v1>
+    <v2>/observations/controller_state/tcp_pose/orientation/y</v2>
+    <v3>/observations/controller_state/tcp_pose/orientation/z</v3>
+   </additional_sources>
+  </snippet>
+  <snippet name="ref_roll">
+   <global></global>
+   <function>w = value
+x = v1
+y = v2
+z = v3
+
+dcm21 = 2 * (w * x + y * z)
+dcm22 = w*w - x*x - y*y + z*z
+
+roll = math.atan(dcm21, dcm22)
+
+return roll * 57.29577951308232</function>
+   <linked_source>/observations/controller_state/reference_tcp_pose/orientation/w</linked_source>
+   <additional_sources>
+    <v1>/observations/controller_state/reference_tcp_pose/orientation/x</v1>
+    <v2>/observations/controller_state/reference_tcp_pose/orientation/y</v2>
+    <v3>/observations/controller_state/reference_tcp_pose/orientation/z</v3>
+   </additional_sources>
+  </snippet>
+  <snippet name="ref_yaw">
+   <global></global>
+   <function>w = value
+x = v1
+y = v2
+z = v3
+
+dcm10 = 2 * (x * y + w * z)
+dcm00 = w*w + x*x - y*y - z*z
+
+yaw = math.atan(dcm10, dcm00)
+
+return yaw * 57.29577951308232</function>
+   <linked_source>/observations/controller_state/reference_tcp_pose/orientation/w</linked_source>
+   <additional_sources>
+    <v1>/observations/controller_state/reference_tcp_pose/orientation/x</v1>
+    <v2>/observations/controller_state/reference_tcp_pose/orientation/y</v2>
+    <v3>/observations/controller_state/reference_tcp_pose/orientation/z</v3>
+   </additional_sources>
+  </snippet>
+  <snippet name="yaw">
+   <global></global>
+   <function>w = value
+x = v1
+y = v2
+z = v3
+
+dcm10 = 2 * (x * y + w * z)
+dcm00 = w*w + x*x - y*y - z*z
+
+yaw = math.atan(dcm10, dcm00)
+
+return yaw * 57.29577951308232</function>
+   <linked_source>/observations/controller_state/tcp_pose/orientation/w</linked_source>
+   <additional_sources>
+    <v1>/observations/controller_state/tcp_pose/orientation/x</v1>
+    <v2>/observations/controller_state/tcp_pose/orientation/y</v2>
+    <v3>/observations/controller_state/tcp_pose/orientation/z</v3>
+   </additional_sources>
+  </snippet>
+  <snippet name="ref_pitch">
+   <global></global>
+   <function>w = value
+x = v1
+y = v2
+z = v3
+
+dcm20 = 2 * (x * z - w * y)
+
+pitch = math.asin(-dcm20)
+
+return pitch * 57.29577951308232</function>
+   <linked_source>/observations/controller_state/reference_tcp_pose/orientation/w</linked_source>
+   <additional_sources>
+    <v1>/observations/controller_state/reference_tcp_pose/orientation/x</v1>
+    <v2>/observations/controller_state/reference_tcp_pose/orientation/y</v2>
+    <v3>/observations/controller_state/reference_tcp_pose/orientation/z</v3>
+   </additional_sources>
+  </snippet>
+  <snippet name="x_torque_diff">
+   <global></global>
+   <function>x = value
+y = v1
+
+return x - y</function>
+   <linked_source>/observations/wrist_wrench/wrench/torque/x</linked_source>
+   <additional_sources>
+    <v1>/observations/controller_state/fts_tare_offset/wrench/torque/x</v1>
+   </additional_sources>
+  </snippet>
+  <snippet name="plug_roll_deg">
+   <global></global>
+   <function>return value*180/3.14159</function>
+   <linked_source>/plug_pose/pose/orientation/roll</linked_source>
+  </snippet>
+ </customMathEquations>
+ <snippets/>
+ <!-- - - - - - - - - - - - - - - -->
+</root>
+
