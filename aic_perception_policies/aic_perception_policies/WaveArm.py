@@ -18,6 +18,7 @@
 import numpy as np
 
 
+
 from aic_model.policy import (
     GetObservationCallback,
     MoveRobotCallback,
@@ -33,11 +34,20 @@ from aic_task_interfaces.msg import Task
 from geometry_msgs.msg import Point, Pose, Quaternion, Vector3, Wrench
 from rclpy.duration import Duration
 
+from aic_perception.utils.pose_estimator import PoseEstimator
+
 
 class WaveArm(Policy):
     def __init__(self, parent_node):
         super().__init__(parent_node)
         self.get_logger().info("WaveArm.__init__()")
+
+        estimator = PoseEstimator(
+            cameras={},
+            templates_dir="templates_dir",      
+            models_dir="models",
+        )
+        self.get_logger().info("imported PoseEstimator")
 
     def insert_cable(
         self,
