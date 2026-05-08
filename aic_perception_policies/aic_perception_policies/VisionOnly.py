@@ -27,17 +27,20 @@ from aic_model_interfaces.msg import Observation
 from aic_task_interfaces.msg import Task
 from sensor_msgs.msg import Image, CameraInfo
 from geometry_msgs.msg import Point, Pose, Quaternion, Transform
+from geometry_msgs.msg import TransformStamped
 from geometry_msgs.msg import Vector3, Wrench
 from rclpy.duration import Duration
 from rclpy.time import Time
 from rclpy.node import Node
 from tf2_ros import TransformException
+from tf2_ros import TransformBroadcaster
 from transforms3d._gohlketransforms import quaternion_multiply, quaternion_slerp
 
 from cv_bridge import CvBridge
 
 from aic_perception.yolo_wrapper import YoloWrapper, plot_bboxes, plot_masks
 from aic_perception.utils.pose_estimator import PoseEstimator
+from aic_perception.utils.infer import save_visualizations
 
 QuaternionTuple = tuple[float, float, float, float]
 
@@ -88,21 +91,28 @@ class VisionOnly(Policy):
         }
 
         self.debug_mask = True
+        
 
         # Path to your data folder
-        policy_data_path = Path("/home/iaslab/ros2_ws/torch_ws/src/aic_perception/data") #<--- CHANGE THIS TO YOUR LOCAL PATH
-        yolo_checkpoint_path = policy_data_path / "weights_istances/yolo26_segment.pt"
-        print(f"Loading YoloWrapper with checkpoint: {yolo_checkpoint_path}")
+        self.policy_data_path = Path("/home/iaslab/ros2_ws/torch_ws/src/aic_perception/data") #<--- CHANGE THIS TO YOUR LOCAL PATH
+        self.yolo_checkpoint_path = self.policy_data_path / "weights_istances/yolo26_segment.pt"
+        print(f"Loading YoloWrapper with checkpoint: {self.yolo_checkpoint_path}")
 
-        self.yolo = YoloWrapper(yolo_checkpoint_path)   
+        self.yolo = YoloWrapper(self.yolo_checkpoint_path)   
         self.get_logger().info("Loaded YoloWrapper")
         
-        self.pose_estimator = PoseEstimator(
-            cameras={},
-            templates_dir="templates_dir",      
-            models_dir="models",
-        )
-        self.get_logger().info("Loaded PoseEstimator")
+        self.templates_dir = self.policy_data_path / "templates"
+        self.models_dir = self.policy_data_path / "ic/models"
+
+        self.pose_estimator = None
+        # self.pose_estimator = PoseEstimator(
+        #     cameras={},
+        #     templates_dir="templates_dir",      
+        #     models_dir="models",
+        # )
+        # self.get_logger().info("Loaded PoseEstimator")
+
+        self.tf_broadcaster = TransformBroadcaster(self._parent_node)
         self.mask_image_pub = {}
         for name in self.camera_names:
             self.mask_image_pub[name] = self._parent_node.create_publisher(Image, f"/pose_estimator/{name}_debug_mask_image", 10)
@@ -156,6 +166,30 @@ class VisionOnly(Policy):
             )
         return None
 
+    def publish_object_tf(self, pose, frame_id, tf_name: str):
+        tf_msg = TransformStamped()
+
+        #print(pose) A dict {'object_id', 'R_m2c', 't_m2c', 'T_m2c', 'T_m2w','quality', 'num_inliers', 'template_id', 'corresp_id'}
+        t = pose['t_m2c'] / 1000.0  # mm -> m
+        q = R.from_matrix(pose['R_m2c']).as_quat()  # x,y,z,w
+
+        #tf_msg.header.stamp = header.stamp
+        #tf_msg.header.frame_id = header.frame_id
+        tf_msg.header.stamp = self.time_now().to_msg()
+        tf_msg.header.frame_id = frame_id
+        tf_msg.child_frame_id = tf_name
+
+        tf_msg.transform.translation.x = float(t[0])
+        tf_msg.transform.translation.y = float(t[1])
+        tf_msg.transform.translation.z = float(t[2])
+
+        tf_msg.transform.rotation.x = float(q[0])
+        tf_msg.transform.rotation.y = float(q[1])
+        tf_msg.transform.rotation.z = float(q[2])
+        tf_msg.transform.rotation.w = float(q[3])
+
+        self.tf_broadcaster.sendTransform(tf_msg)
+
     def prepare_observations(self, obs_msg: Observation, world_frame: str = "world"):
         cameras = {}
         for name, frame in self.camera_frames.items():
@@ -165,7 +199,7 @@ class VisionOnly(Policy):
                 self.get_logger().error(f"Missing data for camera '{name}'")
                 continue
             intrinsics = load_intrinsics(camera_info_msg)
-            tf = self._lookup_transform(self.tool_frame, frame)
+            tf = self._lookup_transform(frame, world_frame) #world  wrt camera
             
             T_world_camera = np.eye(4)
             if tf is not None:
@@ -179,19 +213,27 @@ class VisionOnly(Policy):
                     "t_w2c": T_world_camera[:3, 3].tolist(),
                 },
             }
+
+            print(f"Camera '{name}': intrinsics: {intrinsics}, extrinsics (world to camera): R=\n{cameras[name]['extrinsics']['R_w2c']}, \nt=\n{cameras[name]['extrinsics']['t_w2c']}")
         return cameras
     
-    def compute_masks(self, camera_name: str, image: Image):
+    def compute_masks(self, camera_name: str, image: Image, target_name=None):
         cv_image = self.bridge.imgmsg_to_cv2(image, desired_encoding="bgr8")
         raw_results = self.yolo.predict(cv_image, keep_best=True)
 
         masks = {}
         names = {}
+        confs = {}
         for result in raw_results:
             class_name = result["class_name"]
             confidence = result["confidence"]
             class_id = result["class_id"]
             self.get_logger().info(f"[{camera_name}] YOLO result: {class_id} {class_name} ({confidence:.2f})")
+
+            # Search only for the target object if target_name is specified
+            if target_name is not None and class_name != target_name:
+                self.get_logger().warning(f"Skipping YOLO result with class_name {class_name} since it does not match target_name {target_name}")
+                continue
 
             if class_name is None:
                 self.get_logger().warning(f"Skipping YOLO result with no class name, class_id {class_id}, confidence {confidence:.2f}")
@@ -205,7 +247,7 @@ class VisionOnly(Policy):
             if "mask" in result:
                 masks.setdefault(object_model_id, []).append(result["mask"])
                 names.setdefault(object_model_id, []).append(class_name)
-
+                confs.setdefault(object_model_id, []).append(confidence)
         color = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
         color = color.astype(np.float32) / 255.0
 
@@ -219,6 +261,7 @@ class VisionOnly(Policy):
             "color": color,
             "masks": masks,
             "names": names,
+            "confs": confs,
         }
 
 
@@ -242,20 +285,77 @@ class VisionOnly(Policy):
 
 
         # Wait for camera extrinsics to be available in TF
-        self.tool_frame = "tool0"
+        self.world_frame = "base_link"
         for name, frame in self.camera_frames.items():
-            if not self._wait_for_tf(self.tool_frame, frame):
+            if not self._wait_for_tf(self.world_frame, frame):
                 return False
             
         # Access to image and camera info
-        cameras = self.prepare_observations(get_observation(), world_frame=self.tool_frame)
+        cameras = self.prepare_observations(get_observation(), world_frame=self.world_frame)
         print("Prepared camera observations")
 
+        if self.pose_estimator is None:
+            self.pose_estimator = PoseEstimator(
+                cameras=cameras,
+                templates_dir=self.templates_dir,      
+                models_dir=self.models_dir,
+            )
+            self.get_logger().info("Loaded PoseEstimator")
+
         camera_inputs = {}
+        best_camera = None
+        best_quality = -1.0
         for name, cam in cameras.items():
 
-            cam_mask = self.compute_masks(name, cam["image"])
+            cam_mask = self.compute_masks(name, cam["image"], target_name=task.target_module_name)
             camera_inputs[name] = cam_mask
+
+            if cam_mask["names"]:
+                # If we have detections, use the highest confidence one for pose estimation
+                max_conf = max([max(confs) for confs in cam_mask["confs"].values()])
+                if max_conf > best_quality:
+                    best_quality = max_conf
+                    best_camera = name
+
+        self.get_logger().info(f"Best camera for pose estimation: {best_camera} with quality {best_quality:.2f}")
+
+
+        pose_results = self.pose_estimator.estimate_pose(camera_inputs)
+
+        print(pose_results.keys())
+        data_dir = self.policy_data_path / "ic"
+        output_dir = self.policy_data_path  / "visualizations"
+        scene_id = 1
+        frame_id = 0  # Assuming single frame for now
+        #save_visualizations(data_dir, output_dir, cameras, camera_inputs, pose_results, scene_id, frame_id)
+        scene_id += 1
+
+        for camera_name, camera_results in pose_results.items():
+
+            # Temporarily only use the best camera for pose estimation, since we don't have a good way to fuse multiple views yet.
+            if camera_name != best_camera:
+                self.get_logger().info(f"Skipping pose results from camera {camera_name} since it's not the best camera")
+                continue
+
+            print(f"Camera: {camera_name} - results: {camera_results.keys()}")
+
+            for object_id, poses in camera_results.items():
+
+                print(f"Camera: {camera_name}-{object_id} - results: {len(poses)}")
+
+                for instance_id, pose in enumerate(poses):
+                    quality = None if pose is None else pose["quality"]
+                    print(camera_name, object_id, instance_id, quality)
+                    # tf_name = camera_inputs[camera_name]["names"][object_id][instance_id] if object_id in camera_inputs[camera_name]["names"] else "unknown"
+                    # print(camera_name, object_id, instance_id, quality, '->', tf_name)
+
+                    tf_name = f"{camera_name}_object{object_id}_instance{instance_id}"
+
+                    self.publish_object_tf(pose, self.camera_frames[camera_name], tf_name)
+
+                    print(f"camera: {camera_name}")
+                    print(pose['T_m2w'])
+
 
         
         self.get_logger().info("VisionOnly.insert_cable() exiting...")
