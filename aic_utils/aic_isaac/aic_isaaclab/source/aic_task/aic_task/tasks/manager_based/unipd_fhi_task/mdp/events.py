@@ -95,7 +95,7 @@ class reset_board_and_robot(ManagerTermBase ):
         # Robot configuration
         robot_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="sfp_tip_link"),
         arm_joint_names: list[str] = ["shoulder.*", "elbow.*", "wrist.*"],
-        target_ee_offset_asset_name: str = "nic_card",
+        ee_pose_command_name: str = "sfp_port_pose_command",
         ee_offset_range: dict = {
             "x": (-0.02, 0.02), 
             "y": (-0.02, 0.02), 
@@ -142,7 +142,6 @@ class reset_board_and_robot(ManagerTermBase ):
             )
 
         # - Part poses, anchored to the board
-        target_pos_found = None
         for part_cfg in parts:
             pname = part_cfg["scene_name"]
             part_asset = env.scene[pname]
@@ -162,9 +161,6 @@ class reset_board_and_robot(ManagerTermBase ):
             part_pose = torch.cat([part_pos, part_rot], dim=-1)
             part_asset.write_root_pose_to_sim(part_pose, env_ids=env_ids)
             part_asset.write_root_velocity_to_sim(torch.zeros(n, 6, device=device), env_ids=env_ids)
-
-            if pname == target_ee_offset_asset_name:
-                target_pos_found = part_pos.clone()
 
             if sync_usd_xforms:
                 _write_usd_xform_pose(
@@ -188,20 +184,18 @@ class reset_board_and_robot(ManagerTermBase ):
         if num_arm_joints == 0:
             raise RuntimeError(f"No arm joints found from patterns: {arm_joint_names}")
 
-        # Target EE position
-        if target_pos_found is not None:
-            target_pos = target_pos_found.clone()
-        else:
-            target_asset = env.scene[target_ee_offset_asset_name]
-            target_pos = target_asset.data.root_state_w[env_ids, 0:3].clone()
+        # Get target pose from command manager
+        command_term = env.command_manager.get_term(ee_pose_command_name)
+        # Update command for the newly reset envs
+        command_term._update_command()
+        base_target_pos = command_term.poses_w[env_ids, 0:3]
+        base_target_quat = command_term.poses_w[env_ids, 3:7]
 
-        target_pos[:, 0] += torch.empty(n, device=device).uniform_(*ee_offset_range.get("x", (0.0, 0.0)))
-        target_pos[:, 1] += torch.empty(n, device=device).uniform_(*ee_offset_range.get("y", (0.0, 0.0)))
-        target_pos[:, 2] += torch.empty(n, device=device).uniform_(*ee_offset_range.get("z", (0.0, 0.0)))
-
-        # Target EE orientation (EE pointing down)
-        nominal_quat = torch.zeros(n, 4, device=device)
-        nominal_quat[:, 0] = 1.0
+        # Randomize EE offset around the target position
+        pos_offset = torch.zeros((n, 3), device=device)
+        pos_offset[:, 0] = torch.empty(n, device=device).uniform_(*ee_offset_range.get("x", (0.0, 0.0)))
+        pos_offset[:, 1] = torch.empty(n, device=device).uniform_(*ee_offset_range.get("y", (0.0, 0.0)))
+        pos_offset[:, 2] = torch.empty(n, device=device).uniform_(*ee_offset_range.get("z", (0.0, 0.0)))
 
         roll = torch.empty(n, device=device).uniform_(
             math.radians(ee_offset_range.get("roll", (0.0, 0.0))[0]),
@@ -215,9 +209,10 @@ class reset_board_and_robot(ManagerTermBase ):
             math.radians(ee_offset_range.get("yaw", (0.0, 0.0))[0]),
             math.radians(ee_offset_range.get("yaw", (0.0, 0.0))[1]),
         )
-
         rpy_offset_quat = math_utils.quat_from_euler_xyz(roll, pitch, yaw)
-        target_quat = math_utils.quat_mul(rpy_offset_quat, nominal_quat)
+
+        target_pos = base_target_pos + math_utils.quat_apply(base_target_quat, pos_offset)
+        target_quat = math_utils.quat_mul(base_target_quat, rpy_offset_quat)
         
         lambda_val = 0.1
         joint_pos_arm_des = robot.data.default_joint_pos[env_ids][:, arm_joint_ids].clone()

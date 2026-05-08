@@ -68,7 +68,7 @@ class CollectionTaskCfg(RelCartesianOSPNoRefEnvCfg):
                         "snap_step": {"y": 0.04},
                     },
                 ],
-                "target_ee_offset_asset_name": "nic_card",
+                "ee_pose_command_name": "sfp_port_pose_command",
                 "ee_offset_range": {
                     "x": (0.00, 0.00), 
                     "y": (0.00, 0.00), 
