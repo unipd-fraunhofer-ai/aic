@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import torch
 import numpy as np
 from collections.abc import Sequence
@@ -12,7 +11,7 @@ from .rel_cart_osp_no_ref import RelCartesianOSPNoRefEnvCfg, RelCartesianOSPEnv
 from .insertion_heuristic_logic import InsertionHeuristicLogic, InsertCableState
 
 from isaaclab.controllers import OperationalSpaceController, OperationalSpaceControllerCfg
-from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import EventTermCfg as EventTerm, SceneEntityCfg
 from aic_task.tasks.manager_based.unipd_fhi_task import mdp
 
 from isaaclab.envs.mdp import JointEffortActionCfg
@@ -23,10 +22,8 @@ class ResidualInsertionEnvCfg(RelCartesianOSPNoRefEnvCfg):
     """Configuration for Residual RL Insertion environment."""
 
     # Residual scaling
-    # residual_pos_scale: float = 0.01  # ±1 cm
-    # residual_ori_scale: float = 0.05  # ~3 degrees
-    residual_pos_scale: float = 0.0  # ±1 cm
-    residual_ori_scale: float = 0.0  # ~3 degrees
+    residual_pos_scale: float = 0.01  # ±1 cm
+    residual_ori_scale: float = 0.05  # ~3 degrees
     residual_stiffness_scale: float = 50.0 # ±50 N/m
     osc_impedance_mode: str = "variable_kp"
 
@@ -80,6 +77,8 @@ class ResidualInsertionEnvCfg(RelCartesianOSPNoRefEnvCfg):
             },
         )
 
+        # Disable curriculum
+        self.curriculum.modify_reset_prob = None
 
 class ResidualInsertionEnv(RelCartesianOSPEnv):
     """RL env that combines a heuristic base command with policy residual corrections."""
@@ -99,9 +98,10 @@ class ResidualInsertionEnv(RelCartesianOSPEnv):
             self._quat_tg
         )
         
+        # Get body id for sfp_tip_link for force reading
+        self._tip_body_id, _ = self.scene["robot"].find_bodies("sfp_tip_link")
 
         # Initial inputs for heuristic
-        self.obs = None
         self._h_tip_pos = torch.zeros(self.num_envs, 3, device=self.device)
         self._h_tip_force_z = torch.zeros(self.num_envs, device=self.device)
         self._update_heuristic_inputs()
@@ -133,13 +133,10 @@ class ResidualInsertionEnv(RelCartesianOSPEnv):
         tip_sensor = self.scene.sensors["sfp_tip_sensor"]
         self._h_tip_pos[env_ids] = tip_sensor.data.target_pos_w[env_ids, 0].to(dtype=torch.float32)
         
-        # 2. Tip force Z (read from obs)
-        if self.obs is None:
-            tip_force_z = torch.zeros(self.num_envs, device=self.device)
-        else:
-            tip_force_z = self.obs["policy"][:, 18]
-        self._h_tip_force_z[env_ids] = tip_force_z[env_ids]
-        
+        # 2. Tip force (from raw articulation data)
+        tip_wrench = mdp.body_incoming_wrench(self, SceneEntityCfg("robot", body_ids=self._tip_body_id)).abs()
+        self._h_tip_force_z[env_ids] = tip_wrench[env_ids, 2]
+
     def _set_heuristic_targets(self, env_ids: Sequence[int] | None = None) -> None:
         """Sets the targets for the heuristic."""
         if env_ids is None:
@@ -153,7 +150,7 @@ class ResidualInsertionEnv(RelCartesianOSPEnv):
         port_quat = port_sensor.data.target_quat_w[env_ids, target_idx[env_ids]].to(dtype=torch.float32)
 
         port_pos, port_quat = self._add_noise_to_port(port_pos, port_quat)
-        self._heuristic.set_target(port_pos, port_quat)
+        self._heuristic.set_target(port_pos, port_quat, env_ids=env_ids)
     
     def _add_noise_to_port(self, pos: torch.Tensor, quat: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Adds Gaussian/Uniform noise to port pose as in emp_cheat.py."""
@@ -216,10 +213,10 @@ class ResidualInsertionEnv(RelCartesianOSPEnv):
         self._current_stiffness = torch.clamp(base_stiffness + res_stiff_delta, min=1.0, max=2000.0)
 
     def step(self, action: torch.Tensor):
-        self.obs, reward, terminated, truncated, extras = super().step(action)
+        obs, reward, terminated, truncated, extras = super().step(action)
         
         # Update heuristic inputs for the next step
         self._update_heuristic_inputs()
         
         extras["heuristic_state"] = self._heuristic.states
-        return self.obs, reward, terminated, truncated, extras
+        return obs, reward, terminated, truncated, extras

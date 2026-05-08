@@ -50,7 +50,7 @@ class InsertionHeuristicLogic:
 
         # Logic constants
         self.port_entrance_offset = 0.045
-        self.z_force_threshold = -1.0 # [N]
+        self.z_force_threshold = 0.15 # [N]
         self.untilt_step = np.deg2rad(0.5)
         self.target_stabilize_steps = 75
         self.fix_yaw_limit = np.deg2rad(10.0)
@@ -74,10 +74,10 @@ class InsertionHeuristicLogic:
         self.port_pos[env_ids] = torch.zeros((env_ids.shape[0], 3), device=self.device)
         self.port_quat[env_ids] = torch.zeros((env_ids.shape[0], 4), device=self.device)
 
-    def set_target(self, port_pos, port_quat):
+    def set_target(self, port_pos, port_quat, env_ids):
         """Set the target port pose (world frame)."""
-        self.port_pos = port_pos
-        self.port_quat = port_quat
+        self.port_pos[env_ids] = port_pos
+        self.port_quat[env_ids] = port_quat
 
     def compute(self, tip_pos, tip_force_z):
         """
@@ -108,7 +108,6 @@ class InsertionHeuristicLogic:
         mask = (self.states == InsertCableState.DESCEND_AND_INSERT)
         if mask.any():
             contact = tip_force_z > self.z_force_threshold
-            print("Tip force z: ", tip_force_z)
             depth_reached = self.z_offsets < 0.0
                         
             # If contact, go to STABILIZE_XY to try and find the hole
@@ -117,11 +116,11 @@ class InsertionHeuristicLogic:
             self.states[mask & depth_reached] = InsertCableState.STABILIZE
             self.z_offsets[mask] -= 0.001
 
-        # 3. STABILIZE_XY -> UNTILT / FIX_YAW
+        # 2. STABILIZE_XY -> UNTILT / FIX_YAW
         mask = (self.states == InsertCableState.STABILIZE_XY)
         if mask.any():
             # Current depth check relative to port
-            depth_threshold = self.port_entrance_offset - 0.03
+            depth_threshold = self.port_entrance_offset - 0.04
             finished_stabilize = self.z_offsets < depth_threshold
             if finished_stabilize.any():
                 m = mask & finished_stabilize
@@ -135,7 +134,7 @@ class InsertionHeuristicLogic:
 
             self.z_offsets[mask] -= 0.001
 
-        # 4. FIX_YAW logic (TODO: FIX THIS)
+        # 3. FIX_YAW logic (TODO: FIX THIS)
         mask = (self.states == InsertCableState.FIX_YAW)
         if mask.any():
             current_z = tip_pos[:, 2]
@@ -178,7 +177,7 @@ class InsertionHeuristicLogic:
                 final_fail = failure & (self.fix_yaw_attempt >= 2)
                 self.states[final_fail] = InsertCableState.UNTILT_INSERTED_CABLE
 
-        # 5. UNTILT_INSERTED_CABLE -> REDESCEND
+        # 4. UNTILT_INSERTED_CABLE -> REDESCEND
         mask = (self.states == InsertCableState.UNTILT_INSERTED_CABLE)
         if mask.any():
             self.roll_angles[mask] -= torch.sign(self.roll_angles[mask]) * self.untilt_step
@@ -191,14 +190,14 @@ class InsertionHeuristicLogic:
             self.states[mask & done_untilt] = InsertCableState.REDESCEND
             self.z_offsets[mask] += 0.0005
 
-        # 6. REDESCEND -> STABILIZE
+        # 5. REDESCEND -> STABILIZE
         mask = (self.states == InsertCableState.REDESCEND)
         if mask.any():
             self.z_offsets[mask] -= 0.001
             self.states[mask & (self.z_offsets < -0.015)] = InsertCableState.STABILIZE
             self.step_counts[mask & (self.z_offsets < -0.015)] = 0 # Reset for stabilize
 
-        # 7. STABILIZE -> DONE
+        # 6. STABILIZE -> DONE
         mask = (self.states == InsertCableState.STABILIZE)
         if mask.any():
             self.states[mask & (self.step_counts >= self.target_stabilize_steps)] = InsertCableState.DONE
@@ -208,7 +207,7 @@ class InsertionHeuristicLogic:
         # Stiffness
         stiffness = torch.tensor([90.0, 90.0, 90.0, 50.0, 50.0, 50.0], device=self.device).repeat(self.num_envs, 1)
         stiffness[self.states == InsertCableState.MOVE_ABOVE_PORT] = torch.tensor([1000.0, 1000.0, 1000.0, 150.0, 150.0, 150.0], device=self.device)
-        stiffness[self.states == InsertCableState.DESCEND_AND_INSERT] = torch.tensor([90.0, 90.0, 400.0, 50.0, 50.0, 50.0], device=self.device)
+        stiffness[self.states == InsertCableState.DESCEND_AND_INSERT] = torch.tensor([1000.0, 1000.0, 1000.0, 150.0, 150.0, 150.0], device=self.device)
         stiffness[self.states == InsertCableState.STABILIZE_XY] = torch.tensor([10.0, 10.0, 90.0, 5.0, 5.0, 5.0], device=self.device)
         stiffness[self.states == InsertCableState.FIX_YAW] = torch.tensor([10.0, 10.0, 90.0, 25.0, 25.0, 200.0], device=self.device)
         stiffness[self.states == InsertCableState.UNTILT_INSERTED_CABLE] = torch.tensor([20.0, 20.0, 50.0, 50.0, 50.0, 200.0], device=self.device)
@@ -224,8 +223,6 @@ class InsertionHeuristicLogic:
         # Final Gripper Pose
         target_ee_pos = target_tip_pos + math_utils.quat_apply(target_tip_quat, self.pos_tg)
         target_ee_quat = math_utils.quat_mul(target_tip_quat, self.quat_tg)
-
-        print("current states: ", self.states)
 
         return {
             "target_pos": target_ee_pos,
