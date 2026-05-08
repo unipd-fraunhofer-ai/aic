@@ -40,6 +40,7 @@ class RelCartesianOSPNoRefEnvCfg(AICTaskBaseEnv):
     osc_inertial_dynamics_decoupling: bool = False
     osc_gravity_compensation: bool = True
     osc_effort_limit: float = 187.0
+    osc_impedance_mode: str = "fixed" # "fixed" or "variable_kp"
     
     # Action scaling
     action_delta_pos_scale: float = 0.0005   # 0.5 mm/step
@@ -112,7 +113,7 @@ class RelCartesianOSPEnv(ManagerBasedRLEnv):
             contact_wrench_control_axes_task=[0, 0, 0, 0, 0, 0],
             inertial_dynamics_decoupling=self.cfg.osc_inertial_dynamics_decoupling,
             gravity_compensation=self.cfg.osc_gravity_compensation,
-            impedance_mode="fixed",
+            impedance_mode=self.cfg.osc_impedance_mode,
             motion_stiffness_task=Kp,
             motion_damping_ratio_task=ratios,
             nullspace_control="none",
@@ -124,6 +125,9 @@ class RelCartesianOSPEnv(ManagerBasedRLEnv):
 
         self._target_pos_w: torch.Tensor | None = None
         self._target_quat_w: torch.Tensor | None = None
+        
+        # Buffer for variable stiffness (only used if mode is variable_kp)
+        self._current_stiffness = torch.tensor(self.cfg.osc_stiffness, device=self.device).repeat(self.num_envs, 1)
 
     def step(self, action: torch.Tensor):
         """Modified step that accumulates delta actions and applies OSC torques."""
@@ -237,11 +241,17 @@ class RelCartesianOSPEnv(ManagerBasedRLEnv):
 
         # Set OSC command and compute torque
         target_pose = torch.cat([self._target_pos_w, self._target_quat_w], dim=-1)
-        # Ensure target pose is clean (no NaN/Inf)
-        target_pose = torch.nan_to_num(target_pose, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        if self.cfg.osc_impedance_mode == "variable_kp":
+            command = torch.cat([target_pose, self._current_stiffness], dim=-1)
+        else:
+            command = target_pose
+            
+        # Ensure command is clean (no NaN/Inf)
+        command = torch.nan_to_num(command, nan=0.0, posinf=0.0, neginf=0.0)
         
         self._osc.set_command(
-            command=target_pose,
+            command=command,
             current_ee_pose_b=ee_pose,
             current_task_frame_pose_b=self._identity_pose,
         )
