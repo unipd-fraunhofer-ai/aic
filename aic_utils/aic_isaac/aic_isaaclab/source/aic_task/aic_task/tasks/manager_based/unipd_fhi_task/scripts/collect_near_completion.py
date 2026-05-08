@@ -30,7 +30,7 @@ from isaaclab.utils import configclass
 from isaaclab.managers import EventTermCfg as EventTerm
 
 from aic_task.tasks.manager_based.unipd_fhi_task import mdp
-from aic_task.tasks.manager_based.unipd_fhi_task.config.rel_cart_osp_no_ref import RelCartesianOSPNoRefEnvCfg, RelCartesianOSPEnv
+from aic_task.tasks.manager_based.unipd_fhi_task.config.rel_cart_no_ref import RelCartesianOSPNoRefEnvCfg, RelCartesianOSPNoRefEnv as RelCartesianOSPEnv
 
 ##
 # Task Configuration for Collection
@@ -45,8 +45,9 @@ class CollectionTaskCfg(RelCartesianOSPNoRefEnvCfg):
     def __post_init__(self) -> None:
         super().__post_init__()
 
-       # Modify OSC reference link
+        # Modify OSC reference link
         self.osc_ee_body = "sfp_tip_link"
+        self.osc_stiffness = (300.0, 300.0, 300.0, 50.0, 50.0, 50.0)
 
         # Disable terminations during collection
         self.terminations.time_out = None

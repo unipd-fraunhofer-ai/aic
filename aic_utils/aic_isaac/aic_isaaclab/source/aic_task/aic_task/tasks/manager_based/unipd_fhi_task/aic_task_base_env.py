@@ -1,419 +1,253 @@
-# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
-# All rights reserved.
-#
-# SPDX-License-Identifier: BSD-3-Clause
+from __future__ import annotations
 
-import os
-from dataclasses import MISSING
+import math
+from abc import ABC, abstractmethod
+from collections.abc import Sequence
 
-import isaaclab.sim as sim_utils
-from isaaclab.actuators import ImplicitActuatorCfg
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
-from isaaclab.envs import ManagerBasedRLEnvCfg
-from isaaclab.managers import ActionTermCfg as ActionTerm
-from isaaclab.managers import CurriculumTermCfg as CurrTerm
-from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab.managers import ObservationGroupCfg as ObsGroup
-from isaaclab.managers import ObservationTermCfg as ObsTerm
-from isaaclab.managers import RewardTermCfg as RewTerm
-from isaaclab.managers import SceneEntityCfg
-from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.markers import VisualizationMarkersCfg
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
-from isaaclab.sensors import FrameTransformerCfg, OffsetCfg
+import torch
+
+from isaaclab.controllers import OperationalSpaceController, OperationalSpaceControllerCfg
+from isaaclab.actuators import IdealPDActuatorCfg
+from isaaclab.envs.mdp import JointEffortActionCfg
+from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.utils import configclass
-from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
+from isaaclab.utils.math import (
+    axis_angle_from_quat,
+    quat_apply,
+    quat_conjugate,
+    quat_from_euler_xyz,
+    quat_mul,
+)
+
+from .aic_task_base_env_cfg import AICTaskBaseEnvCfg
 
 
-from . import mdp
+class AICTaskBaseEnv(ManagerBasedRLEnv, ABC):
+    """RL env that applies Operational Space Control (OSC) manually in the step loop."""
 
+    cfg: AICTaskBaseEnvCfg
 
-# Resolve asset directory relative to this file (portable across machines)
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-AIC_ASSET_DIR = os.path.join(_THIS_DIR, "Intrinsic_assets")
-AIC_SCENE_DIR = AIC_ASSET_DIR
-AIC_PARTS_DIR = os.path.join(AIC_ASSET_DIR, "assets")
+    def __init__(self, cfg: AICTaskBaseEnvCfg, **kwargs):
+        super().__init__(cfg, **kwargs)
+        self._osc_setup()
 
-EXTENSION_PATH = os.path.dirname(os.path.abspath(__file__))
+    def _osc_setup(self) -> None:
+        """Initialize OSC controller and cache robot indices."""
+        self._robot = self.scene["robot"]
 
-
-##
-# Scene definition
-##
-
-
-@configclass
-class AICTaskSceneCfg(InteractiveSceneCfg):
-    """Scene for aic task: UR5e robot, aic_scene, task_board."""
-
-    # UR5e + gripper (fully defined here using local asset)
-    robot: ArticulationCfg = ArticulationCfg(
-        prim_path="{ENV_REGEX_NS}/Robot",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=os.path.join(AIC_ASSET_DIR, "aic_unified_robot_cable_sdf.usd"),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=False,
-                max_depenetration_velocity=5.0,
-            ),
-            articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=True,
-                solver_position_iteration_count=16,
-                solver_velocity_iteration_count=8,
-            ),
-            activate_contact_sensors=False,
-        ),
-        init_state=ArticulationCfg.InitialStateCfg(
-            pos=(-0.2, 0.2, 1.14),
-            rot=(0.0, 0.0, 0.0, 1.0),
-            joint_pos={
-                "shoulder_pan_joint": -0.1597,
-                "shoulder_lift_joint": -1.3542,
-                "elbow_joint": -1.6648,
-                "wrist_1_joint": -1.6933,
-                "wrist_2_joint": 1.5710,
-                "wrist_3_joint": 1.4110,
-            },
-        ),
-        actuators={
-            "arm": ImplicitActuatorCfg(
-                joint_names_expr=[
-                    "shoulder_pan_joint",
-                    "shoulder_lift_joint",
-                    "elbow_joint",
-                    "wrist_1_joint",
-                    "wrist_2_joint",
-                    "wrist_3_joint",
-                ],
-                effort_limit_sim=87.0,
-                stiffness=2000.0,
-                damping=100.0,
-            ),
-        },
-    )
-
-    # world
-    ground = AssetBaseCfg(
-        prim_path="/World/ground",
-        spawn=sim_utils.GroundPlaneCfg(),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -1.05)),
-    )
-
-    aic_scene = AssetBaseCfg(
-        prim_path="{ENV_REGEX_NS}/aic_scene",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=os.path.join(AIC_SCENE_DIR, "scene", "aic.usd"),
-        ),
-        init_state=AssetBaseCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 0.0),
-            rot=(1.0, 0.0, 0.0, 0.0),
-        ),
-    )
-
-    task_board = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/task_board",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=os.path.join(
-                AIC_PARTS_DIR, "Task Board Base", "task_board_rigid.usd"
-            ),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                kinematic_enabled=True,
-            ),
-        ),
-        init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.15, -0.2, 1.14), rot=(1.0, 0.0, 0.0, 0.0)
-        ),
-    )
-
-    nic_card = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/nic_card",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=os.path.join(AIC_PARTS_DIR, "NIC Card", "nic_card.usd"),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                kinematic_enabled=True,
-            ),
-        ),
-        init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.11765, -0.17671, 1.2143),
-            rot=(0.0, 0.0, -0.7068252, 0.7073883),
-        ),
-    )
-
-    sfp_tip_sensor = FrameTransformerCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/cable/sfp_module/sfp_tip_link",
-        target_frames=[
-            FrameTransformerCfg.FrameCfg(
-                prim_path="{ENV_REGEX_NS}/Robot/cable/sfp_module/sfp_tip_link",
-                name="sfp_tip",
+        # Resolve EE body index
+        body_name = self.cfg.osc_ee_body
+        try:
+            self._ee_body_idx = self._robot.body_names.index(body_name)
+        except ValueError:
+            self._ee_body_idx = next(
+                i for i, n in enumerate(self._robot.body_names) if body_name in n
             )
-        ],
-        visualizer_cfg = VisualizationMarkersCfg(
-            prim_path="/Visuals/SfpTip",
-            markers={
-                "frame": sim_utils.UsdFileCfg(
-                    usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
-                    scale=(0.01, 0.01, 0.01),
-                ),
-            },
-        ),
-        debug_vis=True,
-    )
 
-    sfp_port_sensor = FrameTransformerCfg(
-        prim_path="{ENV_REGEX_NS}/nic_card",
-        target_frames=[
-            FrameTransformerCfg.FrameCfg(
-                prim_path="{ENV_REGEX_NS}/nic_card",
-                name="port_0",
-                offset=OffsetCfg(
-                    pos=(0.01295, -0.031571999742310328, 0.0050100016239075385),
-                    rot=(-4.3005889216184035e-17, 4.3587761463281758e-17, -0.70233947038650502, 0.71184216532683964),
-                ),
-            ),
-            FrameTransformerCfg.FrameCfg(
-                prim_path="{ENV_REGEX_NS}/nic_card",
-                name="port_1",
-                offset=OffsetCfg(
-                    pos=(-0.01025, -0.031571999742310328, 0.0050100016239075385),
-                    rot=(-4.3005889216184035e-17, 4.3587761463281758e-17, -0.70233947038650502, 0.71184216532683964),
-                ),
-            ),
-        ],
-        debug_vis=False,
-    )
-
-
-##
-# MDP settings
-##
-
-
-@configclass
-class EventCfg:
-    """Configuration for events."""
-
-    reset_scene = EventTerm(
-        func=mdp.reset_to_near_completion,
-        mode="reset",
-        params={
-            "reset_data_filename": "near_completion_states_100k.pt",
-            "partially_inserted_prob": 0.8,  # Start with high probability of partially inserted states
-        },
-    )
-
-
-@configclass
-class ActionsCfg:
-    """Action specifications for the MDP."""
-
-    arm_action: ActionTerm = MISSING
-
-
-@configclass
-class CommandsCfg:
-    """Command specifications for the MDP."""
-
-    sfp_port_pose_command = mdp.SfpPoseTargetCommandCfg()
-
-
-@configclass
-class TerminationsCfg:
-    """Termination terms for the MDP."""
-
-    time_out = DoneTerm(func=mdp.time_out, time_out=True)
-
-    failed_insertion = DoneTerm(func=mdp.failed_insertion, params={
-        "command_name": "sfp_port_pose_command",
-        "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-        "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-    })
-
-
-@configclass
-class ObservationsCfg:
-    """Observation specifications for the MDP: robot state, ee pose, pose command."""
-
-    @configclass
-    class PolicyCfg(ObsGroup):
-        """Observations for policy: joint state, ee pose, pose command."""
-
-        # Minimal target port position and orientation (x, y, yaw = 3 dims)
-        port_target = ObsTerm(
-            func=mdp.target_port_base,
-            params={"asset_cfg": SceneEntityCfg("robot")},
+        # Resolve arm joint indices
+        self._arm_joint_ids = torch.tensor(
+            [self._robot.joint_names.index(n) for n in self.cfg.osc_joint_names],
+            device=self.device,
+            dtype=torch.long,
         )
 
-        # End effector position, orientation, linear velocity, angular velocity (12 dims)
-        ee_pos = ObsTerm(
-            func=mdp.ee_pos_base,
-            params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
+        # PhysX Jacobian skips the base link for fixed-base robots.
+        self._jacobi_body_idx = self._ee_body_idx - 1
+
+        # Build OSC Controller
+        Kp = list(self.cfg.osc_stiffness)
+        Kd = list(self.cfg.osc_damping)
+        ratios = [
+            kd / (2.0 * math.sqrt(kp)) if kp > 0 else 1.0
+            for kp, kd in zip(Kp, Kd)
+        ]
+        
+        osc_cfg = OperationalSpaceControllerCfg(
+            target_types=["pose_abs"],
+            motion_control_axes_task=[1, 1, 1, 1, 1, 1],
+            contact_wrench_control_axes_task=[0, 0, 0, 0, 0, 0],
+            inertial_dynamics_decoupling=self.cfg.osc_inertial_dynamics_decoupling,
+            gravity_compensation=self.cfg.osc_gravity_compensation,
+            impedance_mode=self.cfg.osc_impedance_mode,
+            motion_stiffness_task=Kp,
+            motion_damping_ratio_task=ratios,
+            nullspace_control="none",
         )
-        ee_rpy = ObsTerm(
-            func=mdp.ee_rpy_base,
-            params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
+        self._osc = OperationalSpaceController(osc_cfg, self.num_envs, self.device)
+
+        self._identity_pose = torch.zeros(self.num_envs, 7, device=self.device)
+        self._identity_pose[:, 3] = 1.0
+
+        self._target_pos_w: torch.Tensor | None = None
+        self._target_quat_w: torch.Tensor | None = None
+        
+        # Buffer for variable stiffness (only used if mode is variable_kp)
+        self._current_stiffness = torch.tensor(self.cfg.osc_stiffness, device=self.device).repeat(self.num_envs, 1)
+
+    def step(self, action: torch.Tensor):
+        """Modified step that accumulates delta actions and applies OSC torques."""
+        action = action.to(self.device)
+
+        # Clip action to be within [-1, 1] for stability
+        if torch.isnan(action).any():
+            print("[CRITICAL] NaN Action detected!")
+            action = torch.nan_to_num(action, nan=0.0)
+        action = torch.clamp(action, -1.0, 1.0)
+
+        # Initialize targets if they don't exist
+        if self._target_pos_w is None:
+            self._seed_target_from_ee()
+
+        # 1. Update world-frame target based on delta action
+        self._update_target(action)
+
+        # 2. Standard manager-based steps (processing observations, etc.)
+        self.action_manager.process_action(action)
+        
+        # We manually step the simulation to apply OSC at each physics step
+        is_rendering = self.sim.has_gui() or self.sim.has_rtx_sensors()
+
+        for _ in range(self.cfg.decimation):
+            self._sim_step_counter += 1
+            
+            # This writes the action manager's output (which is 0 effort due to our dummy cfg)
+            self.action_manager.apply_action()
+            
+            # 3. Overwrite efforts with OSC output
+            self._apply_osc()
+
+            # Check for physics explosions
+            joint_vel = self._robot.data.joint_vel
+            if not torch.isfinite(joint_vel).all():
+                bad_envs = ~torch.isfinite(joint_vel).all(dim=-1)
+                reset_ids = bad_envs.nonzero(as_tuple=False).squeeze(-1)
+                print(f"[CRITICAL] Physics exploded in {len(reset_ids)} envs. Resetting...")
+                self._reset_idx(reset_ids)
+                # Skip the current sim step update for these envs to avoid NaN propagation
+                continue
+            
+            self.scene.write_data_to_sim()
+            self.sim.step(render=False)
+            
+            if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
+                self.sim.render()
+            self.scene.update(dt=self.physics_dt)
+
+        # 4. Post-physics manager updates
+        self.episode_length_buf += 1
+        self.common_step_counter += 1
+        self.reset_buf = self.termination_manager.compute()
+        self.reward_buf = self.reward_manager.compute(dt=self.step_dt)
+
+        # Handle resets
+        reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
+        if len(reset_env_ids) > 0:
+            self._reset_idx(reset_env_ids)
+
+        self.command_manager.compute(dt=self.step_dt)
+        self.obs_buf = self.observation_manager.compute(update_history=True)
+
+        # Safety check for policy inputs/outputs
+        # obs_buf is a dict of tensors, reward_buf is a tensor
+        obs_has_nan = any(not torch.isfinite(v).all() for v in self.obs_buf.values())
+        rew_has_nan = not torch.isfinite(self.reward_buf).all()
+        if obs_has_nan or rew_has_nan:
+            print(f"[CRITICAL] Non-finite values! Obs: {obs_has_nan}, Rew: {rew_has_nan}. Sanitizing...")
+            for k in self.obs_buf:
+                # Replace NaN and Inf with 0.0
+                self.obs_buf[k] = torch.nan_to_num(self.obs_buf[k], nan=0.0, posinf=0.0, neginf=0.0)
+            self.reward_buf = torch.nan_to_num(self.reward_buf, nan=0.0, posinf=0.0, neginf=0.0)
+
+        return (
+            self.obs_buf,
+            self.reward_buf,
+            self.termination_manager.terminated,
+            self.termination_manager.time_outs,
+            self.extras,
         )
-        ee_lin_vel = ObsTerm(
-            func=mdp.ee_lin_vel_base,
-            params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
+
+    @abstractmethod
+    def _update_target(self, action: torch.Tensor) -> None:
+        pass
+
+    def _apply_osc(self) -> None:
+        """Compute and apply OSC torques to the robot."""
+        robot = self._robot
+
+        # Get Jacobians
+        jacs = robot.root_physx_view.get_jacobians()
+        J_full = jacs[:, self._jacobi_body_idx, :, :].to(self.device)
+        J_arm = J_full[:, :, self._arm_joint_ids]
+
+        # Get current state
+        ee_pos = robot.data.body_pos_w[:, self._ee_body_idx, :]
+        ee_quat = robot.data.body_quat_w[:, self._ee_body_idx, :]
+        ee_pose = torch.cat([ee_pos, ee_quat], dim=-1)
+        ee_vel = robot.data.body_vel_w[:, self._ee_body_idx, :]
+
+        # Optional dynamics terms
+        mass_matrix = None
+        if self.cfg.osc_inertial_dynamics_decoupling:
+            M_full = robot.root_physx_view.get_generalized_mass_matrices()
+            ids = self._arm_joint_ids.cpu()
+            mass_matrix = M_full[:, ids][:, :, ids].to(self.device)
+
+        gravity = None
+        if self.cfg.osc_gravity_compensation:
+            g_full = robot.root_physx_view.get_gravity_compensation_forces()
+            ids = self._arm_joint_ids.cpu()
+            gravity = g_full[:, ids].to(self.device)
+
+        # Set OSC command and compute torque
+        target_pose = torch.cat([self._target_pos_w, self._target_quat_w], dim=-1)
+        
+        if self.cfg.osc_impedance_mode == "variable_kp":
+            command = torch.cat([target_pose, self._current_stiffness], dim=-1)
+        else:
+            command = target_pose
+            
+        # Ensure command is clean (no NaN/Inf)
+        command = torch.nan_to_num(command, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        self._osc.set_command(
+            command=command,
+            current_ee_pose_b=ee_pose,
+            current_task_frame_pose_b=self._identity_pose,
         )
-        ee_ang_vel = ObsTerm(
-            func=mdp.ee_ang_vel_base,
-            params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
+        tau_arm = self._osc.compute(
+            jacobian_b=J_arm,
+            current_ee_pose_b=ee_pose,
+            current_ee_vel_b=ee_vel,
+            mass_matrix=mass_matrix,
+            gravity=gravity,
         )
+        
+        # Clamp and apply (and sanitize NaNs/Infs)
+        tau_arm = torch.nan_to_num(tau_arm, nan=0.0, posinf=0.0, neginf=0.0)
+        tau_arm = tau_arm.clamp(-self.cfg.osc_effort_limit, self.cfg.osc_effort_limit)
+        
+        num_joints = robot.num_joints
+        if num_joints == len(self.cfg.osc_joint_names):
+            robot.set_joint_effort_target(tau_arm)
+        else:
+            efforts = torch.zeros(self.num_envs, num_joints, device=self.device)
+            efforts[:, self._arm_joint_ids] = tau_arm
+            robot.set_joint_effort_target(efforts)
 
-        # Body forces (wrench) at the end-effector (force xyz + torque xyz = 6 dims)
-        body_forces = ObsTerm(
-            func=mdp.body_incoming_wrench,
-            scale=0.1,
-            params={
-                "asset_cfg": SceneEntityCfg("robot", body_names=["wrist_3_link"])
-            },
-        )
+    def _seed_target_from_ee(self) -> None:
+        """Synchronize the target pose with the current EE pose."""
+        self._target_pos_w = self._robot.data.body_pos_w[:, self._ee_body_idx, :].clone()
+        self._target_quat_w = self._robot.data.body_quat_w[:, self._ee_body_idx, :].clone()
 
-        # Last action (6 dims)
-        actions = ObsTerm(func=mdp.last_action)
+    def _reset_idx(self, env_ids: Sequence[int]) -> None:
+        """Reset environment indices and re-seed the OSC target."""
+        super()._reset_idx(env_ids)
+        if len(env_ids) == 0:
+            return
 
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = True # Total obs dim = 3 + 12 + 6 + 6 = 27
+        if self._target_pos_w is None:
+            self._seed_target_from_ee()
 
-    # observation groups
-    policy: PolicyCfg = PolicyCfg()
-
-
-@configclass
-class RewardsCfg:
-    """Reward terms for the MDP."""
-
-    insertion_completed = RewTerm(
-        func=mdp.insertion_completed,
-        weight=50.0,
-        params={
-            "threshold": 0.005,
-            "command_name": "sfp_port_pose_command",
-            "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-            "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-        },
-    )
-
-    insertion_position_error_tanh = RewTerm(
-        func=mdp.insertion_position_error_tanh,
-        weight=10,
-        params={
-            "std": 0.025,
-            "command_name": "sfp_port_pose_command",
-            "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-            "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-        },
-    )
-
-    insertion_pose_error_exp = RewTerm(
-        func=mdp.pose_error_exp,
-        weight=10,
-        params={
-            "command_name": "sfp_port_pose_command",
-            "tip_sensor_cfg": SceneEntityCfg("sfp_tip_sensor"),
-            "port_sensor_cfg": SceneEntityCfg("sfp_port_sensor"),
-        },
-    )
-
-    # -- Smoothness penalties --
-    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.001)
-    joint_vel = RewTerm(
-        func=mdp.joint_vel_l2,
-        weight=-0.001,
-        params={"asset_cfg": SceneEntityCfg(
-            "robot", 
-                joint_names=[
-                "shoulder_pan_joint", 
-                "shoulder_lift_joint", 
-                "elbow_joint", 
-                "wrist_1_joint", 
-                "wrist_2_joint", 
-                "wrist_3_joint"
-            ]
-        )},
-    )
-    joint_acc = RewTerm(
-        func=mdp.joint_acc_l2,
-        weight=-1.0e-5,
-        params={"asset_cfg": SceneEntityCfg(
-            "robot", 
-            joint_names=[
-                "shoulder_pan_joint", 
-                "shoulder_lift_joint", 
-                "elbow_joint", 
-                "wrist_1_joint", 
-                "wrist_2_joint", 
-                "wrist_3_joint"
-            ]
-        )},
-    )
-    joint_torques = RewTerm(
-        func=mdp.joint_torques_l2,
-        weight=-1.0e-6,
-        params={"asset_cfg": SceneEntityCfg(
-            "robot", 
-            joint_names=[
-                "shoulder_pan_joint", 
-                "shoulder_lift_joint", 
-                "elbow_joint", 
-                "wrist_1_joint", 
-                "wrist_2_joint", 
-                "wrist_3_joint"
-            ]
-        )}
-    )
-
-
-@configclass
-class CurriculumCfg:
-    """Configuration for curriculum terms."""
-
-    modify_reset_prob = CurrTerm(
-        func=mdp.modify_reset_prob,
-        params={
-            "event_term_name": "reset_scene",
-            "reward_term_name": "insertion_completed",
-            "update_threshold": 0.6,
-            "step": 0.05,
-            "min_prob": 0.2,
-        },
-    )
-
-
-##
-# Environment configuration
-##
-
-
-@configclass
-class AICTaskBaseEnv(ManagerBasedRLEnvCfg):
-    """Base environment configuration for the AIC task"""
-
-    # Scene settings
-    scene: AICTaskSceneCfg = AICTaskSceneCfg(num_envs=2048, env_spacing=2.0)
-    # Basic settings
-    observations: ObservationsCfg = ObservationsCfg()
-    actions: ActionsCfg = ActionsCfg()
-    # MDP settings
-    commands: CommandsCfg = CommandsCfg()
-    rewards: RewardsCfg = RewardsCfg()
-    terminations: TerminationsCfg = TerminationsCfg()
-    events: EventCfg = EventCfg()
-    curriculum: CurriculumCfg = CurriculumCfg()
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-
-        # General settings
-        self.decimation = 8
-        self.sim.render_interval = self.decimation
-        self.episode_length_s = 10.0
-        self.sim.dt = 1.0 / 240.0
-
-        # Viewport / video framing.
-        self.viewer.origin_type = "env"
-        self.viewer.env_index = 0
-        self.viewer.eye = (0.45, 0.30, 1.50)
-        self.viewer.lookat = (0.10, -0.20, 1.20)
+        # Seed OSC target from actual EE pose (after reset perturbation).
+        self._target_pos_w[env_ids] = self._robot.data.body_pos_w[env_ids, self._ee_body_idx, :].clone()
+        self._target_quat_w[env_ids] = self._robot.data.body_quat_w[env_ids, self._ee_body_idx, :].clone()

@@ -4,54 +4,108 @@ import torch
 import numpy as np
 from collections.abc import Sequence
 
-from isaaclab.utils import configclass
 import isaaclab.utils.math as math_utils
-
-from .rel_cart_osp_no_ref import RelCartesianOSPNoRefEnvCfg, RelCartesianOSPEnv
-from .insertion_heuristic_logic import InsertionHeuristicLogic, InsertCableState
-
-from isaaclab.controllers import OperationalSpaceController, OperationalSpaceControllerCfg
+from isaaclab.managers import ActionTermCfg as ActionTerm
 from isaaclab.managers import EventTermCfg as EventTerm, SceneEntityCfg
-from aic_task.tasks.manager_based.unipd_fhi_task import mdp
-
+from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.envs.mdp import JointEffortActionCfg
 from isaaclab.utils import configclass
 
+from ..aic_task_base_env_cfg import AICTaskBaseEnvCfg
+from ..aic_task_base_env import AICTaskBaseEnv
+from .. import mdp
+
+from .insertion_heuristic_logic import InsertionHeuristicLogic
+
 @configclass
-class ResidualInsertionEnvCfg(RelCartesianOSPNoRefEnvCfg):
-    """Configuration for Residual RL Insertion environment."""
+class ActionsCfg:
+    """Action specifications for the MDP."""
+    
+    # Define 12-dim action space for the policy: [pos(3), ori(3), stiffness(6)]
+    # Use two dummy joint effort action with scale 0 to define the shape.
+    arm_action: ActionTerm = JointEffortActionCfg(
+        asset_name="robot",
+        joint_names=[
+            "shoulder_pan_joint",
+            "shoulder_lift_joint",
+            "elbow_joint",
+            "wrist_1_joint",
+            "wrist_2_joint",
+            "wrist_3_joint",
+        ],
+        scale=0.0, 
+    )
+    stiffness_action: ActionTerm = JointEffortActionCfg(
+        asset_name="robot",
+        joint_names=[
+            "shoulder_pan_joint",
+            "shoulder_lift_joint",
+            "elbow_joint",
+            "wrist_1_joint",
+            "wrist_2_joint",
+            "wrist_3_joint",
+        ],
+        scale=0.0,
+    )
 
-    # Residual scaling
-    residual_pos_scale: float = 0.01  # ±1 cm
-    residual_ori_scale: float = 0.05  # ~3 degrees
-    residual_stiffness_scale: float = 50.0 # ±50 N/m
-    osc_impedance_mode: str = "variable_kp"
+@configclass
+class ObservationsCfg:
+    """Observation specifications for the MDP: robot state, ee pose, pose command."""
 
-    # Port noise
-    pos_std: float = 0.003
-    rot_std: float = float(np.deg2rad(7))
+    @configclass
+    class PolicyCfg(ObsGroup):
+        """Observations for policy: joint state, ee pose, pose command."""
 
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        
-        self.osc_stiffness = [90.0, 90.0, 90.0, 20.0, 20.0, 20.0]
-        self.osc_damping = [35.0, 35.0, 35.0, 9.0, 9.0, 9.0]
-
-        # Define 12-dim action space for the policy: [pos(3), ori(3), stiffness(6)]
-        # We use two dummy joint effort action with scale 0 to define the shape.
-        self.actions.arm_action = JointEffortActionCfg(
-            asset_name="robot",
-            joint_names=self.osc_joint_names,
-            scale=0.0,
+        # Minimal target port position and orientation (x, y, yaw = 3 dims)
+        port_target = ObsTerm(
+            func=mdp.target_port_base,
+            params={"asset_cfg": SceneEntityCfg("robot")},
         )
-        self.actions.stiffness_action = JointEffortActionCfg(
-            asset_name="robot",
-            joint_names=self.osc_joint_names,
-            scale=0.0,
+
+        # End effector position, orientation, linear velocity, angular velocity (12 dims)
+        ee_pos = ObsTerm(
+            func=mdp.ee_pos_base,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
+        )
+        ee_rpy = ObsTerm(
+            func=mdp.ee_rpy_base,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
+        )
+        ee_lin_vel = ObsTerm(
+            func=mdp.ee_lin_vel_base,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
+        )
+        ee_ang_vel = ObsTerm(
+            func=mdp.ee_ang_vel_base,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names="gripper_tcp")},
         )
 
-        self.events.reset_scene = EventTerm(
-            func=mdp.reset_board_and_robot,
+        # Body forces (wrench) at the end-effector (force xyz + torque xyz = 6 dims)
+        body_forces = ObsTerm(
+            func=mdp.body_incoming_wrench,
+            scale=0.1,
+            params={
+                "asset_cfg": SceneEntityCfg("robot", body_names=["wrist_3_link"])
+            },
+        )
+
+        # Last action (6 dims)
+        actions = ObsTerm(func=mdp.last_action)
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True # Total obs dim = 3 + 12 + 6 + 6 = 27
+
+    # observation groups
+    policy: PolicyCfg = PolicyCfg()
+
+@configclass
+class EventCfg:
+    """Configuration for events."""
+
+    reset_scene = EventTerm(
+         func=mdp.reset_board_and_robot,
             mode="reset",
             params={
                 "board_scene_name": "task_board",
@@ -75,17 +129,40 @@ class ResidualInsertionEnvCfg(RelCartesianOSPNoRefEnvCfg):
                     "yaw": (0.0, 0.0),
                 },
             },
-        )
+    )
 
-        # Disable curriculum
-        self.curriculum.modify_reset_prob = None
 
-class ResidualInsertionEnv(RelCartesianOSPEnv):
+##
+# Env definition
+##
+
+
+@configclass
+class RelCartesianOSPResidualEnvCfg(AICTaskBaseEnvCfg):
+    """Configuration for Residual RL Insertion environment."""
+
+    # Residual scaling
+    residual_pos_scale: float = 0.01  # ±1 cm
+    residual_ori_scale: float = 0.05  # ~3 degrees
+    residual_stiffness_scale: float = 50.0 # ±50 N/m
+    osc_impedance_mode: str = "variable_kp"
+
+    # Port noise
+    pos_std: float = 0.003
+    rot_std: float = float(np.deg2rad(7))
+
+    # MDP settings
+    actions: ActionsCfg = ActionsCfg()
+    observations: ObservationsCfg = ObservationsCfg()
+    events: EventCfg = EventCfg()
+
+
+class RelCartesianOSPResidualEnv(AICTaskBaseEnv):
     """RL env that combines a heuristic base command with policy residual corrections."""
 
-    cfg: ResidualInsertionEnvCfg
+    cfg: RelCartesianOSPResidualEnvCfg
 
-    def __init__(self, cfg: ResidualInsertionEnvCfg, **kwargs):
+    def __init__(self, cfg: RelCartesianOSPResidualEnvCfg, **kwargs):
         super().__init__(cfg, **kwargs)
         
         # Calculate tip to gripper transform

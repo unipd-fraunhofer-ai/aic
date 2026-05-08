@@ -31,7 +31,7 @@ from isaaclab.managers import EventTermCfg as EventTerm
 from aic_task.tasks.manager_based.unipd_fhi_task import mdp
 
 # Import the base OSP task and env
-from aic_task.tasks.manager_based.unipd_fhi_task.config.rel_cart_osp_no_ref import RelCartesianOSPNoRefEnvCfg, RelCartesianOSPEnv
+from aic_task.tasks.manager_based.unipd_fhi_task.config.rel_cart_no_ref import RelCartesianOSPNoRefEnvCfg, RelCartesianOSPNoRefEnv as RelCartesianOSPEnv
 
 ##
 # Task Configuration
@@ -69,6 +69,7 @@ class CheatCodeTaskCfg(RelCartesianOSPNoRefEnvCfg):
 
         # Modify OSC reference link
         self.osc_ee_body = "sfp_tip_link"
+        self.osc_stiffness = (300.0, 300.0, 300.0, 50.0, 50.0, 50.0)
 
         # Disable episode timeout
         self.terminations.time_out = None

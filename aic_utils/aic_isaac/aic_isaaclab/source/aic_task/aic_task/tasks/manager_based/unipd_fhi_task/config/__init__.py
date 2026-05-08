@@ -8,41 +8,21 @@ from .. import agents
 
 
 gym.register(
-    id="Rel-Joint-No-Ref",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    id="Rel-Cart-No-Ref",
+    entry_point=f"{__name__}.rel_cart_no_ref:RelCartesianOSPNoRefEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.rel_joint_no_ref:RelJointNoRefEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.rel_cart_no_ref:RelCartesianOSPNoRefEnvCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
     },
 )
 
 gym.register(
-    id="Rel-Cart-DiffIK-No-Ref",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    id="Rel-Cart-Residual",
+    entry_point=f"{__name__}.rel_cart_residual:RelCartesianOSPResidualEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.rel_cart_diff_ik_no_ref:RelCartesianDiffIKNoRefEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Rel-Cart-OSP-No-Ref",
-    entry_point=f"{__name__}.rel_cart_osp_no_ref:RelCartesianOSPEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.rel_cart_osp_no_ref:RelCartesianOSPNoRefEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Rel-Cart-OSP-Residual",
-    entry_point=f"{__name__}.residual_insertion_env:ResidualInsertionEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.residual_insertion_env:ResidualInsertionEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.rel_cart_residual:RelCartesianOSPResidualEnvCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
     },
 )

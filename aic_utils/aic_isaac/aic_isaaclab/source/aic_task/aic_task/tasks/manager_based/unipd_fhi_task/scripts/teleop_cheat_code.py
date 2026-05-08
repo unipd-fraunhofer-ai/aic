@@ -33,7 +33,7 @@ from isaaclab.devices.keyboard import Se3Keyboard, Se3KeyboardCfg
 from aic_task.tasks.manager_based.unipd_fhi_task import mdp
 
 # Import the base OSP task and env
-from aic_task.tasks.manager_based.unipd_fhi_task.config.rel_cart_osp_no_ref import RelCartesianOSPNoRefEnvCfg, RelCartesianOSPEnv
+from aic_task.tasks.manager_based.unipd_fhi_task.config.rel_cart_no_ref import RelCartesianOSPNoRefEnvCfg, RelCartesianOSPNoRefEnv as RelCartesianOSPEnv
 
 ##
 # Task Configuration
@@ -48,12 +48,15 @@ class TeleopTaskCfg(RelCartesianOSPNoRefEnvCfg):
 
         # Modify OSC reference link
         self.osc_ee_body = "sfp_tip_link"
+        self.osc_stiffness = (300.0, 300.0, 300.0, 50.0, 50.0, 50.0)
+
         # Increase sensitivity for teleoperation
         self.action_delta_pos_scale = 1.0
         self.action_delta_ori_scale = 1.0
 
         # Disable episode timeout for teleop validation
         self.terminations.time_out = None
+        self.terminations.failed_insertion = None
 
         # Disable randomization to keep robot behavior consistent
         self.events.robot_joint_stiffness_and_damping = None
@@ -105,7 +108,7 @@ class TeleopCheatCode:
         self.zero_action = torch.zeros(self.num_envs, 6, device=self.device)
 
         # Initialize keyboard
-        self.keyboard = Se3Keyboard(Se3KeyboardCfg(pos_sensitivity=1.0, rot_sensitivity=1.0)) # Scales are now in EnvCfg
+        self.keyboard = Se3Keyboard(Se3KeyboardCfg(pos_sensitivity=0.0005, rot_sensitivity=0.0001))
         print(self.keyboard)
 
 
