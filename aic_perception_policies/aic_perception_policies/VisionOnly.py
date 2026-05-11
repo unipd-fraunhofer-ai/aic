@@ -11,7 +11,7 @@ from unittest import result
 import numpy as np
 import cv2
 from pathlib import Path
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation
 
 from aic_model.policy import (
     GetObservationCallback,
@@ -26,8 +26,8 @@ from aic_control_interfaces.msg import (
 from aic_model_interfaces.msg import Observation
 from aic_task_interfaces.msg import Task
 from sensor_msgs.msg import Image, CameraInfo
-from geometry_msgs.msg import Point, Pose, Quaternion, Transform
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import Point, Pose, Quaternion
+from geometry_msgs.msg import TransformStamped, Transform
 from geometry_msgs.msg import Vector3, Wrench
 from rclpy.duration import Duration
 from rclpy.time import Time
@@ -41,6 +41,8 @@ from cv_bridge import CvBridge
 from aic_perception.yolo_wrapper import YoloWrapper, plot_bboxes, plot_masks
 from aic_perception.utils.pose_estimator import PoseEstimator
 from aic_perception.utils.infer import save_visualizations
+
+from aic_perception_policies.CheatCode import CheatCode
 
 QuaternionTuple = tuple[float, float, float, float]
 
@@ -69,7 +71,7 @@ def transform_to_matrix(transform: Transform) -> np.ndarray:
     rotation = transform.rotation
     T = np.eye(4)
     T[0:3, 3] = [translation.x, translation.y, translation.z]
-    r = R.from_quat([rotation.x, rotation.y, rotation.z, rotation.w])
+    r = Rotation.from_quat([rotation.x, rotation.y, rotation.z, rotation.w])
     T[0:3, 0:3] = r.as_matrix()
     return T
 
@@ -79,6 +81,9 @@ class VisionOnly(Policy):
         super().__init__(parent_node)
         self.get_logger().info("VisionOnly.__init__()")
         
+        self._tip_x_error_integrator = 0.0
+        self._tip_y_error_integrator = 0.0
+        self._max_integrator_windup = 0.05
         self._task = None
         self.bridge = CvBridge()
 
@@ -125,6 +130,9 @@ class VisionOnly(Policy):
         return object_model_id
 
 
+    #######################################################################
+    # Cheact code
+
     def _wait_for_tf(
         self, target_frame: str, source_frame: str, timeout_sec: float = 10.0
     ) -> bool:
@@ -152,6 +160,123 @@ class VisionOnly(Policy):
         )
         return False
     
+    def calc_gripper_pose(
+        self,
+        port_transform: Transform,
+        slerp_fraction: float = 1.0,
+        position_fraction: float = 1.0,
+        z_offset: float = 0.1,
+        reset_xy_integrator: bool = False,
+    ) -> Pose:
+        """Find the gripper pose that results in plug alignment."""
+        q_port = (
+            port_transform.rotation.w,
+            port_transform.rotation.x,
+            port_transform.rotation.y,
+            port_transform.rotation.z,
+        )
+        plug_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
+            "base_link",
+            f"{self._task.cable_name}/{self._task.plug_name}_link",
+            Time(),
+        )
+        q_plug = (
+            plug_tf_stamped.transform.rotation.w,
+            plug_tf_stamped.transform.rotation.x,
+            plug_tf_stamped.transform.rotation.y,
+            plug_tf_stamped.transform.rotation.z,
+        )
+        q_plug_inv = (
+            -q_plug[0],
+            q_plug[1],
+            q_plug[2],
+            q_plug[3],
+        )
+        q_diff = quaternion_multiply(q_port, q_plug_inv)
+        gripper_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
+            "base_link",
+            "gripper/tcp",
+            Time(),
+        )
+        q_gripper = (
+            gripper_tf_stamped.transform.rotation.w,
+            gripper_tf_stamped.transform.rotation.x,
+            gripper_tf_stamped.transform.rotation.y,
+            gripper_tf_stamped.transform.rotation.z,
+        )
+        q_gripper_target = quaternion_multiply(q_diff, q_gripper)
+        q_gripper_slerp = quaternion_slerp(q_gripper, q_gripper_target, slerp_fraction)
+
+        gripper_xyz = (
+            gripper_tf_stamped.transform.translation.x,
+            gripper_tf_stamped.transform.translation.y,
+            gripper_tf_stamped.transform.translation.z,
+        )
+        port_xy = (
+            port_transform.translation.x,
+            port_transform.translation.y,
+        )
+        plug_xyz = (
+            plug_tf_stamped.transform.translation.x,
+            plug_tf_stamped.transform.translation.y,
+            plug_tf_stamped.transform.translation.z,
+        )
+        plug_tip_gripper_offset = (
+            gripper_xyz[0] - plug_xyz[0],
+            gripper_xyz[1] - plug_xyz[1],
+            gripper_xyz[2] - plug_xyz[2],
+        )
+
+        tip_x_error = port_xy[0] - plug_xyz[0]
+        tip_y_error = port_xy[1] - plug_xyz[1]
+
+        if reset_xy_integrator:
+            self._tip_x_error_integrator = 0.0
+            self._tip_y_error_integrator = 0.0
+        else:
+            self._tip_x_error_integrator = np.clip(
+                self._tip_x_error_integrator + tip_x_error,
+                -self._max_integrator_windup,
+                self._max_integrator_windup,
+            )
+            self._tip_y_error_integrator = np.clip(
+                self._tip_y_error_integrator + tip_y_error,
+                -self._max_integrator_windup,
+                self._max_integrator_windup,
+            )
+
+        self.get_logger().info(
+            f"pfrac: {position_fraction:.3} xy_error: {tip_x_error:0.3} {tip_y_error:0.3}   integrators: {self._tip_x_error_integrator:.3} , {self._tip_y_error_integrator:.3}"
+        )
+
+        i_gain = 0.15
+
+        target_x = port_xy[0] + i_gain * self._tip_x_error_integrator
+        target_y = port_xy[1] + i_gain * self._tip_y_error_integrator
+        target_z = port_transform.translation.z + z_offset - plug_tip_gripper_offset[2]
+
+        blend_xyz = (
+            position_fraction * target_x + (1.0 - position_fraction) * gripper_xyz[0],
+            position_fraction * target_y + (1.0 - position_fraction) * gripper_xyz[1],
+            position_fraction * target_z + (1.0 - position_fraction) * gripper_xyz[2],
+        )
+
+        return Pose(
+            position=Point(
+                x=blend_xyz[0],
+                y=blend_xyz[1],
+                z=blend_xyz[2],
+            ),
+            orientation=Quaternion(
+                w=q_gripper_slerp[0],
+                x=q_gripper_slerp[1],
+                y=q_gripper_slerp[2],
+                z=q_gripper_slerp[3],
+            ),
+        )
+    
+    #######################################################################
+    
     def _lookup_transform(self, target_frame: str, source_frame: str):
         """Lookup a TF transform, with error handling."""
         try:
@@ -169,26 +294,32 @@ class VisionOnly(Policy):
     def publish_object_tf(self, pose, frame_id, tf_name: str):
         tf_msg = TransformStamped()
 
-        #print(pose) A dict {'object_id', 'R_m2c', 't_m2c', 'T_m2c', 'T_m2w','quality', 'num_inliers', 'template_id', 'corresp_id'}
-        t = pose['t_m2c'] / 1000.0  # mm -> m
-        q = R.from_matrix(pose['R_m2c']).as_quat()  # x,y,z,w
-
         #tf_msg.header.stamp = header.stamp
         #tf_msg.header.frame_id = header.frame_id
         tf_msg.header.stamp = self.time_now().to_msg()
         tf_msg.header.frame_id = frame_id
         tf_msg.child_frame_id = tf_name
 
-        tf_msg.transform.translation.x = float(t[0])
-        tf_msg.transform.translation.y = float(t[1])
-        tf_msg.transform.translation.z = float(t[2])
-
-        tf_msg.transform.rotation.x = float(q[0])
-        tf_msg.transform.rotation.y = float(q[1])
-        tf_msg.transform.rotation.z = float(q[2])
-        tf_msg.transform.rotation.w = float(q[3])
+        tf_msg.transform = self.pose_to_transform(pose, scale_factor=1000.0)  # Convert from mm to m
 
         self.tf_broadcaster.sendTransform(tf_msg)
+
+    def pose_to_transform(self, pose, scale_factor=1000.0) -> Transform:
+        transform = Transform()
+
+        #print(pose) A dict {'object_id', 'R_m2c', 't_m2c', 'T_m2c', 'T_m2w','quality', 'num_inliers', 'template_id', 'corresp_id'}
+        t = pose['t_m2c'] / scale_factor  # meters
+        q = Rotation.from_matrix(pose['R_m2c']).as_quat()  # x,y,z,w
+
+        transform.translation.x = float(t[0])
+        transform.translation.y = float(t[1])
+        transform.translation.z = float(t[2])
+        transform.rotation.x = float(q[0])
+        transform.rotation.y = float(q[1])
+        transform.rotation.z = float(q[2])
+        transform.rotation.w = float(q[3])
+
+        return transform
 
     def prepare_observations(self, obs_msg: Observation, world_frame: str = "world"):
         cameras = {}
@@ -204,6 +335,9 @@ class VisionOnly(Policy):
             T_world_camera = np.eye(4)
             if tf is not None:
                 T_world_camera = transform_to_matrix(tf.transform)
+
+            # Pose estimator expect mm
+            T_world_camera[:3, 3] = T_world_camera[:3, 3] * 1000.0 # Convert from m to mm
 
             cameras[name] = {
                 "image": image_msg,
@@ -263,6 +397,46 @@ class VisionOnly(Policy):
             "names": names,
             "confs": confs,
         }
+    
+    def compute_port_pose(self, best_pose, T_world_camera, scale_factor=1000.0):
+        T_m2c = best_pose['T_m2c']
+
+        T_m2c[0:3, 3] = T_m2c[0:3, 3] / scale_factor  # Convert from mm to m
+
+        T_world_m = T_world_camera @ T_m2c
+        transform = Transform()
+        transform.translation.x = float(T_world_m[0, 3])
+        transform.translation.y = float(T_world_m[1, 3])
+        transform.translation.z = float(T_world_m[2, 3])
+        r = Rotation.from_matrix(T_world_m[:3, :3])
+        q = r.as_quat()  # x,y,z,w
+        transform.rotation.x = float(q[0])
+        transform.rotation.y = float(q[1])
+        transform.rotation.z = float(q[2])
+        transform.rotation.w = float(q[3])
+        return transform
+
+    def quaternion_to_rotation_matrix(self, q: Quaternion) -> np.ndarray:
+        return Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+
+    def transform_stamped_to_matrix(self, tf_msg: TransformStamped) -> np.ndarray:
+        q = Quaternion()
+        q.x = tf_msg.transform.rotation.x
+        q.y = tf_msg.transform.rotation.y
+        q.z = tf_msg.transform.rotation.z
+        q.w = tf_msg.transform.rotation.w
+
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = self.quaternion_to_rotation_matrix(q)
+        T[:3, 3] = np.array(
+            [
+                tf_msg.transform.translation.x,
+                tf_msg.transform.translation.y,
+                tf_msg.transform.translation.z,
+            ],
+            dtype=np.float64,
+        )
+        return T
 
 
     """
@@ -330,6 +504,8 @@ class VisionOnly(Policy):
         #save_visualizations(data_dir, output_dir, cameras, camera_inputs, pose_results, scene_id, frame_id)
         scene_id += 1
 
+        best_pose = None
+
         for camera_name, camera_results in pose_results.items():
 
             # Temporarily only use the best camera for pose estimation, since we don't have a good way to fuse multiple views yet.
@@ -356,6 +532,65 @@ class VisionOnly(Policy):
                     print(f"camera: {camera_name}")
                     print(pose['T_m2w'])
 
+                # Use the best pose (highest quality) for this object to publish a TF for the object in the world frame
+                sorted_poses = sorted(poses, key=lambda p: p["quality"] if p is not None else -1.0, reverse=True)
+                best_pose = sorted_poses[0] if sorted_poses else None
+                tf_name = f"{camera_name}_object{object_id}"
+                self.publish_object_tf(best_pose, self.camera_frames[camera_name], tf_name)
+
+        self.get_logger().info("VisionOnly.insert_cable() port pose estimated. Starting robot motion...")
+
+        #port_transform = self.pose_to_transform(best_pose, scale_factor=1000.0)  # Convert from mm to m
+        
+        print(f"Best pose:\n{best_pose}")
+
+        T_world_camera = self.transform_stamped_to_matrix(self._lookup_transform(self.world_frame, self.camera_frames[best_camera]))
+        print(f"T_world_camera:\n{T_world_camera}")
+
+        port_transform = self.compute_port_pose(best_pose, T_world_camera)
+        print(f"Computed port transform:\n{port_transform}")
+
+        ###################################################################
+        z_offset = 0.2
+
+        # Over five seconds, smoothly interpolate from the current position to
+        # a position above the port.
+        for t in range(0, 100):
+            interp_fraction = t / 100.0
+            try:
+                self.set_pose_target(
+                    move_robot=move_robot,
+                    pose=self.calc_gripper_pose(
+                        port_transform,
+                        slerp_fraction=interp_fraction,
+                        position_fraction=interp_fraction,
+                        z_offset=z_offset,
+                        reset_xy_integrator=True,
+                    ),
+                )
+            except TransformException as ex:
+                self.get_logger().warn(f"TF lookup failed during interpolation: {ex}")
+            self.sleep_for(0.05)
+
+        # Descend until the cable is inserted into the port.
+        while True:
+            if z_offset < -0.015:
+                break
+
+            z_offset -= 0.0005
+            self.get_logger().info(f"z_offset: {z_offset:0.5}")
+            try:
+                self.set_pose_target(
+                    move_robot=move_robot,
+                    pose=self.calc_gripper_pose(port_transform, z_offset=z_offset),
+                )
+            except TransformException as ex:
+                self.get_logger().warn(f"TF lookup failed during insertion: {ex}")
+            self.sleep_for(0.05)
+
+        self.get_logger().info("Waiting for connector to stabilize...")
+        self.sleep_for(5.0)
+        ###################################################################
 
         
         self.get_logger().info("VisionOnly.insert_cable() exiting...")

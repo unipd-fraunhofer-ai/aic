@@ -28,6 +28,7 @@ setup(
             'test_camera_node = aic_perception.test_camera_node:main',
             'yolo_wrapper_node = aic_perception.yolo_wrapper_node:main',
             'pose_estimator_node = aic_perception.pose_estimator_node:main',
+            'pose_estimator_mv_node = aic_perception.pose_estimator_mv_node:main',
         ],
     },
 )
