@@ -398,12 +398,16 @@ class VisionOnly(Policy):
             "confs": confs,
         }
     
-    def compute_port_pose(self, best_pose, T_world_camera, scale_factor=1000.0):
+    def compute_port_pose(self, best_pose, T_world_camera, T_model_to_port=None, scale_factor=1000.0):
         T_m2c = best_pose['T_m2c']
 
         T_m2c[0:3, 3] = T_m2c[0:3, 3] / scale_factor  # Convert from mm to m
 
         T_world_m = T_world_camera @ T_m2c
+        
+        if T_model_to_port is not None:
+            T_world_m = T_world_m @ T_model_to_port
+
         transform = Transform()
         transform.translation.x = float(T_world_m[0, 3])
         transform.translation.y = float(T_world_m[1, 3])
@@ -501,7 +505,7 @@ class VisionOnly(Policy):
         output_dir = self.policy_data_path  / "visualizations"
         scene_id = 1
         frame_id = 0  # Assuming single frame for now
-        #save_visualizations(data_dir, output_dir, cameras, camera_inputs, pose_results, scene_id, frame_id)
+        save_visualizations(data_dir, output_dir, cameras, camera_inputs, pose_results, scene_id, frame_id)
         scene_id += 1
 
         best_pose = None
@@ -547,8 +551,24 @@ class VisionOnly(Policy):
         T_world_camera = self.transform_stamped_to_matrix(self._lookup_transform(self.world_frame, self.camera_frames[best_camera]))
         print(f"T_world_camera:\n{T_world_camera}")
 
-        port_transform = self.compute_port_pose(best_pose, T_world_camera)
+
+        # Apply transform from model to port frame to get it in the world frame
+        T_model_to_port = np.eye(4)
+        T_model_to_port[:3, 3] = np.array([0.01890205, -0.08077641, -0.00036502])
+        T_model_to_port[:3, :3] = Rotation.from_quat([0.7071068, 0, 0, -0.7071068]).as_matrix()
+
+
+        port_transform = self.compute_port_pose(best_pose, T_world_camera, T_model_to_port)
         print(f"Computed port transform:\n{port_transform}")
+
+
+        tf_msg = TransformStamped()
+        tf_msg.header.stamp = self.time_now().to_msg()
+        tf_msg.header.frame_id = 'base_link'
+        tf_msg.child_frame_id = f'{tf_name}_port_entrance'
+        tf_msg.transform = port_transform
+        self.tf_broadcaster.sendTransform(tf_msg)
+
 
         ###################################################################
         z_offset = 0.2
