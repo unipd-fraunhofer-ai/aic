@@ -150,7 +150,7 @@ class VisionBase(Policy):
             t_gripper_to_tip = vision_utils.CABLE_TIP_FRAMES[plug_name]['t_gripper_to_tip']
             q_gripper_to_tip = vision_utils.CABLE_TIP_FRAMES[plug_name]['q_gripper_to_tip']
 
-            T_gripper_to_tip = vision_utils.transform_from_Rt(
+            T_gripper_to_tip = vision_utils.matrix_from_Rt(
                 R=Rotation.from_quat(q_gripper_to_tip).as_matrix(),
                 t=t_gripper_to_tip,
             )
@@ -254,6 +254,162 @@ class VisionBase(Policy):
                 z=q_gripper_slerp[3],
             ),
         )
+    
+    #######################################################################
+    # Vision utilities
+    #######################################################################
+    def get_camera_observations(self, obs_msg: Observation, world_frame: str = "world"):
+        cameras = {}
+        for name, frame in self.camera_frames.items():
+            image_msg = getattr(obs_msg, name.replace("camera", "image"))
+            camera_info_msg = getattr(obs_msg, name.replace("camera", "camera_info"))
+            if image_msg is None or camera_info_msg is None:
+                self.get_logger().error(f"Missing data for camera '{name}'")
+                continue
+            intrinsics = vision_utils.load_intrinsics(camera_info_msg)
+
+            # NOTE: Pose estimator requires world wrt camera (in millimeters!)
+            extrinsics = self._parent_node._tf_buffer.lookup_transform(
+                frame,
+                world_frame,
+                Time(),
+            )
+            
+            T_world_camera = vision_utils.transform_to_matrix(extrinsics.transform)
+            T_world_camera[:3, 3] = T_world_camera[:3, 3] * 1000.0 # Convert from m to mm
+
+            cameras[name] = {
+                "image": image_msg,
+                "intrinsics": intrinsics,
+                "extrinsics": {
+                    "R_w2c": T_world_camera[:3, :3].tolist(),
+                    "t_w2c": T_world_camera[:3, 3].tolist(),
+                },
+            }
+            #print(f"Camera '{name}': intrinsics: {intrinsics}, extrinsics (world to camera): R=\n{cameras[name]['extrinsics']['R_w2c']}, \nt=\n{cameras[name]['extrinsics']['t_w2c']}")
+        return cameras
+    
+    def compute_segmentation_masks(self, camera_name: str, image: Image, target_name=None):
+        cv_image = self.bridge.imgmsg_to_cv2(image, desired_encoding="bgr8")
+        raw_results = self.yolo.predict(cv_image, keep_best=True)
+
+        masks = {}
+        names = {}
+        confs = {}
+        for result in raw_results:
+            class_name = result["class_name"]
+            confidence = result["confidence"]
+            class_id = result["class_id"]
+            self.get_logger().info(f"[{camera_name}] YOLO result: {class_id} {class_name} ({confidence:.2f})")
+
+            # Search only for the target object if target_name is specified
+            if target_name is not None and class_name != target_name:
+                self.get_logger().warning(f"Skipping YOLO result with class_name {class_name} since it does not match target_name {target_name}")
+                continue
+
+            if class_name is None:
+                self.get_logger().warning(f"Skipping YOLO result with no class name, class_id {class_id}, confidence {confidence:.2f}")
+                continue
+
+            object_model_id = vision_utils.get_object_model_id(class_name)
+            if object_model_id not in vision_utils.CLASS_NAMES_MAP.values():
+                self.get_logger().warning(f"Unknown object_model_id {object_model_id}, class_name {class_name} in YOLO results")
+                continue
+
+            if "mask" in result:
+                masks.setdefault(object_model_id, []).append(result["mask"])
+                names.setdefault(object_model_id, []).append(class_name)
+                confs.setdefault(object_model_id, []).append(confidence)
+        color = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        color = color.astype(np.float32) / 255.0
+
+        if self.debug_mask:
+            image_mask = plot_masks(cv_image, raw_results)
+            image_mask_msg = self.bridge.cv2_to_imgmsg(image_mask, encoding="bgr8")
+            image_mask_msg.header = image.header
+            self.mask_image_pub[camera_name].publish(image_mask_msg)
+
+        return {
+            "color": color,
+            "masks": masks,
+            "names": names,
+            "confs": confs,
+        }
+    
+    def compute_poses(
+            self, cameras, camera_inputs, 
+            scale_factor=1000.0,
+            mask_quality_threshold=0.5,
+            pose_quality_threshold=0.5
+        ):
+        if self.pose_estimator is None:
+            self.pose_estimator = PoseEstimator(
+                cameras=cameras,
+                templates_dir=self.templates_dir,      
+                models_dir=self.models_dir,
+            )
+            self.get_logger().info("Loaded PoseEstimator")
+
+        pose_detections = self.pose_estimator.estimate_pose(camera_inputs)
+
+        # filter to select the best pose based on the best camera quality
+        best_camera_name = vision_utils.get_best_camera(
+            camera_inputs,
+            quality_threshold=mask_quality_threshold
+        )
+        best_pose = vision_utils.get_best_pose(
+            pose_detections,
+            best_camera_name=best_camera_name,
+            quality_threshold=pose_quality_threshold,
+        )
+
+        if best_pose is not None:
+            best_pose['t_m2c'] = best_pose['t_m2c'] / scale_factor  # meters
+            best_pose['T_m2c'] = vision_utils.matrix_from_Rt(
+                R=Rotation.from_matrix(best_pose['R_m2c']).as_matrix(),
+                t=np.array(best_pose['t_m2c']),
+            )
+            best_pose['camera_name'] = best_camera_name
+
+        return best_pose
+        
+
+    def get_port_local_transform(self, target_module_name, port_name: str):
+        if 'nic_card_mount' in target_module_name:
+            t_model_to_port = self.nic_card_port_frames[port_name]['t_ply']
+            q_model_to_port = self.nic_card_port_frames[port_name]['q_ply']
+        elif 'sc_port' in target_module_name:
+            t_model_to_port = self.sc_port_frames[port_name]['t_ply']
+            q_model_to_port = self.sc_port_frames[port_name]['q_ply']
+        else:
+            self.get_logger().error(f"Unknown target module {target_module_name} in task, cannot retrieve model to port transform")
+            return None
+        
+        T_model_to_port = vision_utils.matrix_from_Rt(
+            R=Rotation.from_quat(q_model_to_port).as_matrix(),
+            t=np.array(t_model_to_port),
+        )
+        return T_model_to_port
+    
+    def compute_port_transform(self, T_camera_model, T_world_camera, T_model_to_port=None):
+        
+        T_world_m = T_world_camera @ T_camera_model
+        
+        if T_model_to_port is not None:
+            T_world_m = T_world_m @ T_model_to_port
+
+        transform = vision_utils.matrix_to_transform(T_world_m)
+        return transform    
+    
+    def publish_debug_tf(self, transform: Transform, frame_id: str, child_frame_id: str):
+        tf_stamped = TransformStamped()
+        tf_stamped.header.stamp = self.time_now().to_msg()
+        tf_stamped.header.frame_id = frame_id
+        tf_stamped.child_frame_id = child_frame_id
+        tf_stamped.transform = transform
+        self.tf_broadcaster.sendTransform(tf_stamped)
+        
+    #######################################################################
 
     def insert_cable(
         self,
@@ -262,29 +418,105 @@ class VisionBase(Policy):
         move_robot: MoveRobotCallback,
         send_feedback: SendFeedbackCallback,
     ):
-        self.get_logger().info(f"CheatCode.insert_cable() task: {task}")
+        self.get_logger().info(f"VisionBase.insert_cable() task: {task}")
         self._task = task
 
-        port_frame = f"task_board/{task.target_module_name}/{task.port_name}_link"
-        cable_tip_frame = f"{task.cable_name}/{task.plug_name}_link"
+        # port_frame = f"task_board/{task.target_module_name}/{task.port_name}_link"
+        # cable_tip_frame = f"{task.cable_name}/{task.plug_name}_link"
+        # try:
+        #     port_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
+        #         "base_link",
+        #         port_frame,
+        #         Time(),
+        #     )
+        # except TransformException as ex:
+        #     self.get_logger().error(f"Could not look up port transform: {ex}")
+        #     return False
+        # port_transform = port_tf_stamped.transform
+        port_transform = None
 
-        # Wait for both the port and cable tip TFs to become available.
-        # These come via ground_truth and may not be immediate.
-        for frame in [port_frame, cable_tip_frame]:
-            if not self._wait_for_tf("base_link", frame):
+        # TODO: move arm in predefined start configuration?
+
+        ######################################### <-- Perception
+
+        # Wait for camera extrinsics to be available in TF
+        self.world_frame = "base_link"
+        for name, frame in self.camera_frames.items():
+            if not self._wait_for_tf(self.world_frame, frame):
                 return False
+        
+        # Search until a high confidence pose is detected
+        while port_transform is None:
 
-        try:
-            port_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
-                "base_link",
-                port_frame,
-                Time(),
+            observation = get_observation()
+            # Access to image and camera info
+            cameras = self.get_camera_observations(observation, world_frame=self.world_frame)
+            self.get_logger().info(f"[Perception] Camera observations obtained for cameras: {list(cameras.keys())}")
+
+            # Segment only the required module in the task board to simplify pose estimation
+            camera_inputs = {}
+            for name, cam in cameras.items():
+                camera_inputs[name] = self.compute_segmentation_masks(
+                    camera_name=name, 
+                    image=cam["image"], 
+                    target_name=task.target_module_name
+                )
+
+            # Compute poses based on the segmented masks
+            detected_pose = self.compute_poses(
+                cameras, 
+                camera_inputs,
+                mask_quality_threshold=0.8,
+                pose_quality_threshold=0.5,
             )
-        except TransformException as ex:
-            self.get_logger().error(f"Could not look up port transform: {ex}")
-            return False
-        port_transform = port_tf_stamped.transform
 
+            if detected_pose is not None:
+                T_world_camera = vision_utils.transform_to_matrix(
+                    self._parent_node._tf_buffer.lookup_transform(
+                        'base_link', 
+                        self.camera_frames[detected_pose['camera_name']],
+                        Time(),
+                        )
+                    )
+                
+                #port_name = f'{task.port_name}_link'  
+                #port_name = f'{task.port_name}_link_entrance'
+
+                T_model_to_port = self.get_port_local_transform(
+                    target_module_name=task.target_module_name,
+                    port_name=f"{task.port_name}_link",
+                )
+                port_transform = self.compute_port_transform(
+                    T_camera_model=detected_pose['T_m2c'],
+                    T_world_camera=T_world_camera,
+                    T_model_to_port=T_model_to_port,
+                )
+
+                best_camera_name = detected_pose['camera_name']
+                tf_name = f"{best_camera_name}_{task.port_name}_link"
+                self.publish_debug_tf(port_transform, frame_id='base_link', child_frame_id=tf_name)
+                break
+
+            robot_pose = observation.controller_state.tcp_pose
+            print(f"[Perception] Robot TCP pose: {robot_pose}")
+
+            # Move the arm in the environment to explore and find board
+            self.set_pose_target(
+                move_robot=move_robot,
+                pose=vision_utils.random_pose_increment(
+                    robot_pose, 
+                    position_scale=0.02, 
+                    orientation_scale=None,
+                    ),
+            )
+            self.sleep_for(0.25)
+        
+        
+        ######################################### --> Perception
+
+        self.get_logger().info(f"[Perception] Best pose found with quality above threshold, proceeding with insertion.")
+
+        ######################################### <-- CheatCode policy
         z_offset = 0.2
 
         # Over five seconds, smoothly interpolate from the current position to
@@ -324,6 +556,7 @@ class VisionBase(Policy):
 
         self.get_logger().info("Waiting for connector to stabilize...")
         self.sleep_for(5.0)
+        ######################################### --> CheatCode policy
 
-        self.get_logger().info("CheatCode.insert_cable() exiting...")
+        self.get_logger().info("VisionBase.insert_cable() exiting...")
         return True
