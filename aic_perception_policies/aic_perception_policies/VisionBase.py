@@ -466,7 +466,7 @@ class VisionBase(Policy):
             detected_pose = self.compute_poses(
                 cameras, 
                 camera_inputs,
-                mask_quality_threshold=0.8,
+                mask_quality_threshold=0.5,
                 pose_quality_threshold=0.5,
             )
 
