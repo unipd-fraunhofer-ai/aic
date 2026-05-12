@@ -37,6 +37,9 @@ import aic_perception_policies.vision_utils as vision_utils
 
 QuaternionTuple = tuple[float, float, float, float]
 
+#<--- CHANGE THIS TO YOUR LOCAL PATH 
+POLICY_DATA_PATH = "/home/iaslab/ros2_ws/torch_ws/src/aic_perception/data"
+#------------------------------------------------------------
 
 class VisionBase(Policy):
     def __init__(self, parent_node):
@@ -49,12 +52,43 @@ class VisionBase(Policy):
         self._max_integrator_windup = 0.05
         self._task = None
 
+        # Path to your data folder
+        self.policy_data_path = Path(POLICY_DATA_PATH)
+        self.yolo_checkpoint_path = self.policy_data_path / "weights_istances/yolo26_segment.pt"
+        self.templates_dir = self.policy_data_path / "templates"
+        self.models_dir = self.policy_data_path / "ic/models"
+        self.nic_card_ports_filename = self.policy_data_path / "nic_card_merged_transforms.json"
+        self.sc_port_filename = self.policy_data_path / "sc_port_visual_pulito.json"
 
+        # Perception variables
+        self.camera_names = ["center_camera", "left_camera", "right_camera"]
+        self.camera_frames = {name: f"{name}/optical" for name in self.camera_names}
+
+        self.nic_card_port_frames = vision_utils.load_model_frames(self.nic_card_ports_filename)
+        self.sc_port_frames = vision_utils.load_model_frames(self.sc_port_filename)
+
+        self.pose_estimator = None
+        self.yolo = YoloWrapper(self.yolo_checkpoint_path)  
+        self.get_logger().info("Loaded YoloWrapper")
+
+        # ROS variables
+        self.bridge = CvBridge()
+        self.tf_broadcaster = TransformBroadcaster(self._parent_node)
+
+        # Debug        
+        self.debug_mask = True
+        self.ground_truth_available = False
+
+        self.mask_image_pub = {}
+        for name in self.camera_names:
+            self.mask_image_pub[name] = self._parent_node.create_publisher(Image, f"/pose_estimator/{name}_debug_mask_image", 10)
 
         self.get_logger().info("VisionBase policy initialized.")
 
 
-
+    #######################################################################
+    # CheatCode utiilities
+    #######################################################################
     def _wait_for_tf(
         self, target_frame: str, source_frame: str, timeout_sec: float = 10.0
     ) -> bool:
@@ -97,11 +131,40 @@ class VisionBase(Policy):
             port_transform.rotation.y,
             port_transform.rotation.z,
         )
-        plug_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
+
+        gripper_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
             "base_link",
-            f"{self._task.cable_name}/{self._task.plug_name}_link",
+            "gripper/tcp",
             Time(),
         )
+
+        if self.ground_truth_available:
+            plug_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
+                "base_link",
+                f"{self._task.cable_name}/{self._task.plug_name}_link",
+                Time(),
+            )
+        else:
+            # Compute tip pose in the world frame (when plug_tf_stamped not available in evalutation)
+            plug_name = f"{self._task.plug_name}_link"
+            t_gripper_to_tip = vision_utils.CABLE_TIP_FRAMES[plug_name]['t_gripper_to_tip']
+            q_gripper_to_tip = vision_utils.CABLE_TIP_FRAMES[plug_name]['q_gripper_to_tip']
+
+            T_gripper_to_tip = vision_utils.transform_from_Rt(
+                R=Rotation.from_quat(q_gripper_to_tip).as_matrix(),
+                t=t_gripper_to_tip,
+            )
+            
+            T_world_gripper = vision_utils.transform_to_matrix(gripper_tf_stamped.transform)
+            T_world_tip = T_world_gripper @ T_gripper_to_tip
+
+            plug_tf_stamped = TransformStamped()
+            plug_tf_stamped.header.stamp = gripper_tf_stamped.header.stamp
+            plug_tf_stamped.header.frame_id = gripper_tf_stamped.header.frame_id
+            plug_tf_stamped.child_frame_id = plug_name
+            plug_tf_stamped.transform = vision_utils.matrix_to_transform(T_world_tip)
+            print(f"Computed plug_tf_stamped:\n{plug_tf_stamped}")
+
         q_plug = (
             plug_tf_stamped.transform.rotation.w,
             plug_tf_stamped.transform.rotation.x,
@@ -115,11 +178,6 @@ class VisionBase(Policy):
             q_plug[3],
         )
         q_diff = quaternion_multiply(q_port, q_plug_inv)
-        gripper_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
-            "base_link",
-            "gripper/tcp",
-            Time(),
-        )
         q_gripper = (
             gripper_tf_stamped.transform.rotation.w,
             gripper_tf_stamped.transform.rotation.x,
