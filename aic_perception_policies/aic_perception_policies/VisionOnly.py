@@ -6,6 +6,7 @@ To integrate a policy using ROS data structures, such as geometry_msgs.msg.Pose,
 - supply this Python class name as a parameter to aic_model at runtime.
 """
 
+import json
 from unittest import result
 
 import numpy as np
@@ -108,6 +109,10 @@ class VisionOnly(Policy):
         
         self.templates_dir = self.policy_data_path / "templates"
         self.models_dir = self.policy_data_path / "ic/models"
+
+        self.nic_card_ports_filename = self.policy_data_path / "nic_card_merged_transforms.json"
+        with open(self.nic_card_ports_filename, 'r') as f:
+            self.nic_card_port_frames = json.load(f)
 
         self.pose_estimator = None
         # self.pose_estimator = PoseEstimator(
@@ -551,11 +556,22 @@ class VisionOnly(Policy):
         T_world_camera = self.transform_stamped_to_matrix(self._lookup_transform(self.world_frame, self.camera_frames[best_camera]))
         print(f"T_world_camera:\n{T_world_camera}")
 
+        # Retrieve relative transofrm between module and port
+        port_name = f'{task.port_name}_link'        
+        #port_name = f'{task.port_name}_link_entrance'
+        if 'nic_card_mount' in task.target_module_name:
+            t_model_to_port = self.nic_card_port_frames[port_name]['t_ply']
+            q_model_to_port = self.nic_card_port_frames[port_name]['q_ply']
+        else:
+            self.get_logger().error(f"Unknown target module {task.target_module_name} in task, cannot retrieve model to port transform")
+
+        print(f"Relative transform from model {task.target_module_name} to port {port_name}\n t: {t_model_to_port}\n q: {q_model_to_port}")
+
 
         # Apply transform from model to port frame to get it in the world frame
         T_model_to_port = np.eye(4)
-        T_model_to_port[:3, 3] = np.array([0.01890205, -0.08077641, -0.00036502])
-        T_model_to_port[:3, :3] = Rotation.from_quat([0.7071068, 0, 0, -0.7071068]).as_matrix()
+        T_model_to_port[:3, 3] = np.array(t_model_to_port)
+        T_model_to_port[:3, :3] = Rotation.from_quat(q_model_to_port).as_matrix()
 
 
         port_transform = self.compute_port_pose(best_pose, T_world_camera, T_model_to_port)
