@@ -93,7 +93,8 @@ class VisionOnly(Policy):
         
         self.class_names_map = {
             "nic_card_mount": 4,
-            "task_board_base": 1
+            "task_board_base": 1,
+            "sc_port": 5,
         }
 
         self.debug_mask = True
@@ -113,6 +114,10 @@ class VisionOnly(Policy):
         self.nic_card_ports_filename = self.policy_data_path / "nic_card_merged_transforms.json"
         with open(self.nic_card_ports_filename, 'r') as f:
             self.nic_card_port_frames = json.load(f)
+
+        self.sc_port_filename = self.policy_data_path / "sc_port_visual_pulito.json"
+        with open(self.sc_port_filename, 'r') as f:
+            self.sc_port_frames = json.load(f)
 
         self.pose_estimator = None
         # self.pose_estimator = PoseEstimator(
@@ -505,13 +510,15 @@ class VisionOnly(Policy):
 
         pose_results = self.pose_estimator.estimate_pose(camera_inputs)
 
-        print(pose_results.keys())
-        data_dir = self.policy_data_path / "ic"
-        output_dir = self.policy_data_path  / "visualizations"
-        scene_id = 1
-        frame_id = 0  # Assuming single frame for now
-        save_visualizations(data_dir, output_dir, cameras, camera_inputs, pose_results, scene_id, frame_id)
-        scene_id += 1
+        try:
+            data_dir = self.policy_data_path / "ic"
+            output_dir = self.policy_data_path  / "visualizations"
+            scene_id = 1
+            frame_id = 0  # Assuming single frame for now
+            save_visualizations(data_dir, output_dir, cameras, camera_inputs, pose_results, scene_id, frame_id)
+            scene_id += 1
+        except Exception as e:
+            self.get_logger().error(f"Failed to save visualizations: {e}")
 
         best_pose = None
 
@@ -562,6 +569,9 @@ class VisionOnly(Policy):
         if 'nic_card_mount' in task.target_module_name:
             t_model_to_port = self.nic_card_port_frames[port_name]['t_ply']
             q_model_to_port = self.nic_card_port_frames[port_name]['q_ply']
+        elif 'sc_port' in task.target_module_name:
+            t_model_to_port = self.sc_port_frames[port_name]['t_ply']
+            q_model_to_port = self.sc_port_frames[port_name]['q_ply']
         else:
             self.get_logger().error(f"Unknown target module {task.target_module_name} in task, cannot retrieve model to port transform")
 
