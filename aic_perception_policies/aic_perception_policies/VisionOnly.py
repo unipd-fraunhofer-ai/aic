@@ -77,6 +77,18 @@ def transform_to_matrix(transform: Transform) -> np.ndarray:
     return T
 
 
+cable_tip_frames = {
+    'sc_tip_link': {
+        't_gripper_to_tip': [-0.0005699, -0.0005699, 0.0096407],
+        'q_gripper_to_tip': [-0.2298133984379278, 0.22655156773159751, -0.6627472977643364, -0.6757412205316223],
+    },
+    'sfp_tip_link': {
+        't_gripper_to_tip': [-0.000, -0.020687, 0.054119],
+        'q_gripper_to_tip': [-0.17785966749625665, -0.00503708733179058, 0.027383843138112103, -0.983661891514159],
+    }
+}
+
+
 class VisionOnly(Policy):
     def __init__(self, parent_node: Node):
         super().__init__(parent_node)
@@ -132,7 +144,6 @@ class VisionOnly(Policy):
         for name in self.camera_names:
             self.mask_image_pub[name] = self._parent_node.create_publisher(Image, f"/pose_estimator/{name}_debug_mask_image", 10)
 
-
         
     def get_object_model_id(self, class_name: str):
         object_model_name = '_'.join(class_name.split("_")[:-1]) if class_name[-1].isdigit() else class_name
@@ -185,11 +196,68 @@ class VisionOnly(Policy):
             port_transform.rotation.y,
             port_transform.rotation.z,
         )
-        plug_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
+
+        gripper_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
             "base_link",
-            f"{self._task.cable_name}/{self._task.plug_name}_link",
+            "gripper/tcp",
             Time(),
         )
+
+        ##############################################
+        # Compute tip pose in the world frame 
+        ##############################################
+        
+        if self.ground_truth_available:
+            plug_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
+                "gripper/tcp",
+                f"{self._task.cable_name}/{self._task.plug_name}_link",
+                Time(),
+            )       
+            print(f"gripper/tcp -> {self._task.plug_name}_link transform:\n{transform_to_matrix(plug_tf_stamped.transform)}")
+            print(f"t: {plug_tf_stamped.transform.translation}")
+            print(f"q: {plug_tf_stamped.transform.rotation}")
+        
+            plug_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
+                "base_link",
+                f"{self._task.cable_name}/{self._task.plug_name}_link",
+                Time(),
+            )
+
+        else:
+            self.get_logger().warning(f"TF for {self._task.cable_name}/{self._task.plug_name}_link not available.")
+            T_world_gripper = transform_to_matrix(gripper_tf_stamped.transform)
+
+            plug_name = f"{self._task.plug_name}_link"
+            t_gripper_to_tip = cable_tip_frames[plug_name]['t_gripper_to_tip']
+            q_gripper_to_tip = cable_tip_frames[plug_name]['q_gripper_to_tip']
+            T_gripper_to_tip = np.eye(4)
+            T_gripper_to_tip[:3, 3] = t_gripper_to_tip
+            T_gripper_to_tip[:3, :3] = Rotation.from_quat(q_gripper_to_tip).as_matrix() 
+
+            T_world_tip = T_world_gripper @ T_gripper_to_tip
+            #print(f"T_world_gripper:\n{T_world_gripper}")
+            #print(f"T_gripper_to_tip:\n{T_gripper_to_tip}")
+
+            # check
+            print(f"T_world_tip:\n{T_world_tip}")
+            #print(f"plug_tf_stamped.transform:\n{transform_to_matrix(plug_tf_stamped.transform)}")
+            
+            plug_tf_stamped = TransformStamped()
+            plug_tf_stamped.header.stamp = gripper_tf_stamped.header.stamp
+            plug_tf_stamped.header.frame_id = gripper_tf_stamped.header.frame_id
+            plug_tf_stamped.child_frame_id = plug_name
+            plug_tf_stamped.transform.translation.x = T_world_tip[0, 3]
+            plug_tf_stamped.transform.translation.y = T_world_tip[1, 3]
+            plug_tf_stamped.transform.translation.z = T_world_tip[2, 3]
+            r = Rotation.from_matrix(T_world_tip[:3, :3])
+            q = r.as_quat()  # x,y,z,w
+            plug_tf_stamped.transform.rotation.x = q[0] 
+            plug_tf_stamped.transform.rotation.y = q[1]
+            plug_tf_stamped.transform.rotation.z = q[2]
+            plug_tf_stamped.transform.rotation.w = q[3]
+            print(f"Computed plug_tf_stamped:\n{plug_tf_stamped}")
+
+        ##############################################
         q_plug = (
             plug_tf_stamped.transform.rotation.w,
             plug_tf_stamped.transform.rotation.x,
@@ -203,11 +271,11 @@ class VisionOnly(Policy):
             q_plug[3],
         )
         q_diff = quaternion_multiply(q_port, q_plug_inv)
-        gripper_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
-            "base_link",
-            "gripper/tcp",
-            Time(),
-        )
+        # gripper_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
+        #     "base_link",
+        #     "gripper/tcp",
+        #     Time(),
+        # )
         q_gripper = (
             gripper_tf_stamped.transform.rotation.w,
             gripper_tf_stamped.transform.rotation.x,
@@ -471,6 +539,9 @@ class VisionOnly(Policy):
         port_frame = f"task_board/{task.target_module_name}/{task.port_name}_link"
         cable_tip_frame = f"{task.cable_name}/{task.plug_name}_link"
 
+        self.ground_truth_available = self._wait_for_tf("base_link", cable_tip_frame)
+        #self._wait_for_tf("gripper/tcp", f"{self._task.cable_name}/{self._task.plug_name}_link")
+        self.get_logger().info(f"Ground truth TF for cable tip {'is' if self.ground_truth_available else 'is NOT'} available")
 
         # Wait for camera extrinsics to be available in TF
         self.world_frame = "base_link"
