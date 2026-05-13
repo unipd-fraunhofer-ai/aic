@@ -40,9 +40,21 @@ from transforms3d.quaternions import quat2mat, mat2quat
 from geometry_msgs.msg import Pose, PoseStamped, Vector3, Wrench, WrenchStamped
 from std_msgs.msg import Header
 
+from .utils import (
+    transform_to_matrix,
+    matrix_to_pose,
+    xyz_rpy_to_matrix,
+    quat_multiply,
+    quat_normalize,
+    euler_xyz_to_quat,
+    euler_xyz_to_quat_wxyz,
+    quat2euler,
+    add_noise_to_transform,
+    wrench_at_tip_from_wrist,
+    subtract_wrench_offset,
+)
 
 QuaternionTuple = tuple[float, float, float, float]
-
 
 class InsertCableState(Enum):
     INIT = auto()
@@ -59,214 +71,13 @@ class InsertCableState(Enum):
     FAILED = auto()
 
 
-# Transform utilities
-def transform_to_matrix(t: Transform) -> np.ndarray:
-    q_wxyz = np.array([
-        t.rotation.w,
-        t.rotation.x,
-        t.rotation.y,
-        t.rotation.z,
-    ])
-    R = quat2mat(q_wxyz)
-
-    T = np.eye(4)
-    T[:3, :3] = R
-    T[:3, 3] = [
-        t.translation.x,
-        t.translation.y,
-        t.translation.z,
-    ]
-    return T
-
-def matrix_to_pose(T: np.ndarray) -> Pose:
-    q_wxyz = mat2quat(T[:3, :3])
-    return Pose(
-        position=Point(
-            x=float(T[0, 3]),
-            y=float(T[1, 3]),
-            z=float(T[2, 3]),
-        ),
-        orientation=Quaternion(
-            w=float(q_wxyz[0]),
-            x=float(q_wxyz[1]),
-            y=float(q_wxyz[2]),
-            z=float(q_wxyz[3]),
-        ),
-    )
-
-def xyz_rpy_to_matrix(x, y, z, roll, pitch, yaw) -> np.ndarray:
-    q_xyzw = euler_xyz_to_quat(roll, pitch, yaw)
-    q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]])
-
-    T = np.eye(4)
-    T[:3, :3] = quat2mat(q_wxyz)
-    T[:3, 3] = [x, y, z]
-    return T
-
-def quat_multiply(q1, q2):
-    """
-    Quaternion multiplication.
-    Quaternions are in [x, y, z, w] format.
-    Returns q = q1 * q2
-    """
-    x1, y1, z1, w1 = q1
-    x2, y2, z2, w2 = q2
-
-    x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
-    y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
-    z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
-    w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
-
-    return np.array([x, y, z, w])
-
-def quat_normalize(q):
-    return q / np.linalg.norm(q)
-
-def euler_xyz_to_quat(roll, pitch, yaw):
-    """
-    Convert XYZ Euler angles to quaternion [x, y, z, w]
-    """
-    cr = np.cos(roll / 2.0)
-    sr = np.sin(roll / 2.0)
-    cp = np.cos(pitch / 2.0)
-    sp = np.sin(pitch / 2.0)
-    cy = np.cos(yaw / 2.0)
-    sy = np.sin(yaw / 2.0)
-
-    x = sr * cp * cy - cr * sp * sy
-    y = cr * sp * cy + sr * cp * sy
-    z = cr * cp * sy - sr * sp * cy
-    w = cr * cp * cy + sr * sp * sy
-
-    return np.array([x, y, z, w])
-
-def euler_xyz_to_quat_wxyz(roll, pitch, yaw):
-    q_xyzw = euler_xyz_to_quat(roll, pitch, yaw)
-    return (q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2])
-
-def quat2euler(q):
-    w, x, y, z = q
-
-    # roll (x-axis rotation)
-    t0 = 2.0 * (w * x + y * z)
-    t1 = 1.0 - 2.0 * (x * x + y * y)
-    roll = np.arctan2(t0, t1)
-
-    # pitch (y-axis rotation)
-    t2 = 2.0 * (w * y - z * x)
-    t2 = np.clip(t2, -1.0, 1.0)
-    pitch = np.arcsin(t2)
-
-    # yaw (z-axis rotation)
-    t3 = 2.0 * (w * z + x * y)
-    t4 = 1.0 - 2.0 * (y * y + z * z)
-    yaw = np.arctan2(t3, t4)
-
-    return roll, pitch, yaw
-
-# Noise addition utility
-def add_noise_to_transform(transform, pos_std=[0.002]*3, rot_std=[np.deg2rad(2)]*3):
-    """
-    Add Gaussian noise to a geometry_msgs Transform.
-    
-    pos_std: translation std in meters
-    rot_std: rotation std in radians
-    """
-    # Translation noise
-    transform.translation.x += np.abs(np.random.uniform(0.0, pos_std[0]))
-    transform.translation.y += np.abs(np.random.uniform(0.0, pos_std[1]))
-    transform.translation.z += 0.
-    # transform.translation.x += 0.004
-    # transform.translation.y += 0.004
-    # transform.translation.z -= 0.00
-
-    # Current quaternion [x, y, z, w]
-    q_current = np.array([
-        transform.rotation.x,
-        transform.rotation.y,
-        transform.rotation.z,
-        transform.rotation.w
-    ])
-
-    # Small rotation noise in roll-pitch-yaw
-    # roll_noise = np.random.normal(0.0, rot_std[0])
-    # pitch_noise = np.random.normal(0.0, rot_std[1])
-    yaw_noise = np.random.uniform(-rot_std[2], rot_std[2])
-    roll_noise = np.deg2rad(0)
-    pitch_noise = np.deg2rad(0)
-    # yaw_noise = np.deg2rad(-7)
-
-    q_noise = euler_xyz_to_quat(roll_noise, pitch_noise, yaw_noise)
-
-    # Apply noise rotation
-    q_new = quat_multiply(q_noise, q_current)
-    q_new = quat_normalize(q_new)
-
-    transform.rotation.x = q_new[0]
-    transform.rotation.y = q_new[1]
-    transform.rotation.z = q_new[2]
-    transform.rotation.w = q_new[3]
-
-    return transform
-
-# Wrench transformation utility
-def wrench_at_tip_from_wrist(wrist_wrench: WrenchStamped, T_wrist_tip: np.ndarray,) -> Wrench:
-    R = T_wrist_tip[:3, :3]
-    r = T_wrist_tip[:3, 3]
-
-    F_w = np.array([
-        wrist_wrench.wrench.force.x,
-        wrist_wrench.wrench.force.y,
-        wrist_wrench.wrench.force.z,
-    ])
-
-    tau_w = np.array([
-        wrist_wrench.wrench.torque.x,
-        wrist_wrench.wrench.torque.y,
-        wrist_wrench.wrench.torque.z,
-    ])
-
-    # Transport moment from wrist to tip, then express in tip frame
-    F_tip = R.T @ F_w
-    tau_tip = R.T @ (tau_w - np.cross(r, F_w))
-
-    return Wrench(
-        force=Vector3(
-            x=float(F_tip[0]),
-            y=float(F_tip[1]),
-            z=float(F_tip[2]),
-        ),
-        torque=Vector3(
-            x=float(tau_tip[0]),
-            y=float(tau_tip[1]),
-            z=float(tau_tip[2]),
-        ),
-    )
-    
-def subtract_wrench_offset(wrench: WrenchStamped, offset: WrenchStamped) -> WrenchStamped:
-    return WrenchStamped(
-        header=wrench.header,
-        wrench=Wrench(
-        force=Vector3(
-            x=wrench.wrench.force.x - offset.wrench.force.x,
-            y=wrench.wrench.force.y - offset.wrench.force.y,
-            z=wrench.wrench.force.z - offset.wrench.force.z,
-        ),
-        torque=Vector3(
-            x=wrench.wrench.torque.x - offset.wrench.torque.x,
-            y=wrench.wrench.torque.y - offset.wrench.torque.y,
-            z=wrench.wrench.torque.z - offset.wrench.torque.z,
-        ),
-        ))
-
-
 class EmpiricalInsertion_v2(Policy):
     def __init__(self, parent_node):
         self._tip_x_error_integrator = 0.0
         self._tip_y_error_integrator = 0.0
         self._max_integrator_windup = 0.05
         self._task = None
-        self.pos_std = [0.006]*3   # Scale of the noise to add to the target position
+        self.pos_std = [0.003]*3   # Scale of the noise to add to the target position
         self.rot_std = [np.deg2rad(7)]*3    # Scale of the noise to add to the target rotation
         super().__init__(parent_node)
         self._plug_wrench_pub = parent_node.create_publisher(
@@ -377,9 +188,15 @@ class EmpiricalInsertion_v2(Policy):
         tilt_pitch: float = 0.0,
         tilt_yaw: float = 0.0,
         rotate_tcp_in_place: bool = False,
+        controlled_frame_offset_tip: np.ndarray = np.array([0.0, 0.0, 0.0]),
     ) -> Pose:
         # Fixed transform: gripper/tcp -> plug tip
         T_gripper_tip = transform_to_matrix(gripper_tip_transform)
+
+        # Fixed transform: plug tip -> controlled virtual frame
+        # Translation is expressed in plug-tip coordinates.
+        T_tip_controlled = np.eye(4)
+        T_tip_controlled[:3, 3] = controlled_frame_offset_tip
 
         # Current gripper pose
         gripper_tf_stamped = self._parent_node._tf_buffer.lookup_transform(
@@ -395,33 +212,32 @@ class EmpiricalInsertion_v2(Policy):
             f"{self._task.cable_name}/{self._task.plug_name}_link",
             Time(),
         )
+        T_base_tip_current = transform_to_matrix(plug_tf_stamped.transform)
+
+        # Current controlled-frame pose
+        T_base_controlled_current = T_base_tip_current @ T_tip_controlled
+        p_base_controlled_current = T_base_controlled_current[:3, 3]
 
         # Port pose
         T_base_port = transform_to_matrix(port_transform)
         R_base_port = T_base_port[:3, :3]
         p_base_port = T_base_port[:3, 3]
 
-        # Additional desired tilt of the plug tip w.r.t. the port frame
+        # Additional desired tilt with respect to the port frame
         T_tilt = xyz_rpy_to_matrix(
             0.0, 0.0, 0.0,
             tilt_roll, tilt_pitch, tilt_yaw,
         )
         R_tilt = T_tilt[:3, :3]
 
-        # Desired plug-tip orientation.
-        # This is the matrix equivalent of the original q_port * q_plug_inv mechanism,
-        # but with an extra relative tilt.
-        R_base_tip_desired = R_base_port @ R_tilt
+        # Desired orientation of the controlled frame.
+        # Since controlled frame has same orientation as tip,
+        # this is also the desired tip orientation.
+        R_base_controlled_desired = R_base_port @ R_tilt
 
-        # Current tip position for XY feedback
-        p_base_tip_current = np.array([
-            plug_tf_stamped.transform.translation.x,
-            plug_tf_stamped.transform.translation.y,
-            plug_tf_stamped.transform.translation.z,
-        ])
-
-        tip_x_error = p_base_port[0] - p_base_tip_current[0]
-        tip_y_error = p_base_port[1] - p_base_tip_current[1]
+        # XY feedback now uses the controlled frame, not the plug-tip center
+        tip_x_error = p_base_port[0] - p_base_controlled_current[0]
+        tip_y_error = p_base_port[1] - p_base_controlled_current[1]
 
         if reset_xy_integrator:
             self._tip_x_error_integrator = 0.0
@@ -440,41 +256,45 @@ class EmpiricalInsertion_v2(Policy):
 
         i_gain = 0.15
 
-        # Desired tip position.
-        # This makes the TIP move along its tilted local z-axis.
-        # p_base_tip_desired = (
-        #     p_base_port
-        #     + R_base_tip_desired @ np.array([0.0, 0.0, -z_offset])
-        # )
-        p_base_tip_desired = (
+        # Desired controlled-frame position
+        p_base_controlled_desired = (
             p_base_port
             + np.array([x_offset, 0.0, z_offset])
         )
 
-        # Keep the original XY integral correction behavior
-        p_base_tip_desired[0] += i_gain * self._tip_x_error_integrator
-        p_base_tip_desired[1] += i_gain * self._tip_y_error_integrator
+        p_base_controlled_desired[0] += i_gain * self._tip_x_error_integrator
+        p_base_controlled_desired[1] += i_gain * self._tip_y_error_integrator
 
-        T_base_tip_desired = np.eye(4)
-        T_base_tip_desired[:3, :3] = R_base_tip_desired
-        T_base_tip_desired[:3, 3] = p_base_tip_desired
-        
-        # Convert desired TIP pose to Pose
-        tip_reference_pose = matrix_to_pose(T_base_tip_desired)
+        # Desired controlled-frame pose
+        T_base_controlled_desired = np.eye(4)
+        T_base_controlled_desired[:3, :3] = R_base_controlled_desired
+        T_base_controlled_desired[:3, 3] = p_base_controlled_desired
 
-        # Publish it
+        # Convert desired controlled-frame pose back to desired plug-tip pose:
+        #
+        # T_base_controlled = T_base_tip * T_tip_controlled
+        # therefore:
+        # T_base_tip = T_base_controlled * inv(T_tip_controlled)
+        T_base_tip_desired = T_base_controlled_desired @ np.linalg.inv(T_tip_controlled)
+
+        # Publish controlled-frame reference pose
+        controlled_reference_pose = matrix_to_pose(T_base_controlled_desired)
+
         self._plug_reference_pose_pub.publish(
             PoseStamped(
                 header=Header(
                     frame_id="base_link",
                     stamp=self._parent_node.get_clock().now().to_msg(),
                 ),
-                pose=tip_reference_pose,
+                pose=controlled_reference_pose,
             )
         )
 
-        # Convert desired TIP pose into desired TCP/gripper pose:
-        # T_base_gripper * T_gripper_tip = T_base_tip_desired
+        # Convert desired plug-tip pose into desired TCP/gripper pose:
+        #
+        # T_base_tip = T_base_gripper * T_gripper_tip
+        # therefore:
+        # T_base_gripper = T_base_tip * inv(T_gripper_tip)
         T_base_gripper_target = T_base_tip_desired @ np.linalg.inv(T_gripper_tip)
 
         # Interpolate gripper position
@@ -487,7 +307,7 @@ class EmpiricalInsertion_v2(Policy):
             blend_xyz = (
                 position_fraction * target_xyz
                 + (1.0 - position_fraction) * current_xyz
-            )   
+            )
 
         # Interpolate gripper orientation
         q_current = (
@@ -499,16 +319,16 @@ class EmpiricalInsertion_v2(Policy):
 
         q_target = mat2quat(T_base_gripper_target[:3, :3])
         q_slerp = quaternion_slerp(q_current, q_target, slerp_fraction)
-        
-        roll, pitch, yaw = quat2euler(q_slerp)  # assumes (w, x, y, z)
+
+        roll, pitch, yaw = quat2euler(q_slerp)
 
         self.get_logger().info(
-        f"[CMD POSE] "
-        f"x={blend_xyz[0]:.4f}, y={blend_xyz[1]:.4f}, z={blend_xyz[2]:.4f} | "
-        f"roll={np.rad2deg(roll):.2f}°, "
-        f"pitch={np.rad2deg(pitch):.2f}°, "
-        f"yaw={np.rad2deg(yaw):.2f}°"
-)
+            f"[CMD POSE] "
+            f"x={blend_xyz[0]:.4f}, y={blend_xyz[1]:.4f}, z={blend_xyz[2]:.4f} | "
+            f"roll={np.rad2deg(roll):.2f}°, "
+            f"pitch={np.rad2deg(pitch):.2f}°, "
+            f"yaw={np.rad2deg(yaw):.2f}°"
+        )
 
         return Pose(
             position=Point(
@@ -844,25 +664,22 @@ class EmpiricalInsertion_v2(Policy):
             # ---------------------------------------------------------
             if should_send_command:
                 try:
-                    pose = self.calc_gripper_pose(
+                    pose=self.calc_gripper_pose(
                         port_transform,
                         gripper_tip_transform,
-                        slerp_fraction=command_kwargs.get("slerp_fraction", 1.0),
-                        position_fraction=command_kwargs.get("position_fraction", 1.0),
-                        z_offset=command_kwargs["z_offset"],
-                        reset_xy_integrator=command_kwargs["reset_xy_integrator"],
-                        tilt_roll=command_kwargs["tilt_roll"],
-                        tilt_pitch=command_kwargs["tilt_pitch"],
-                        tilt_yaw=command_kwargs["tilt_yaw"],
+                        z_offset=z_offset,
+                        reset_xy_integrator=True,
+                        tilt_roll=roll_angle,
+                        tilt_pitch=pitch_angle,
+                        tilt_yaw=yaw_angle,
+                        controlled_frame_offset_tip=np.array([-0.003, 0.003, 0.0]),
                     )
 
                     self.set_pose_target(
                         move_robot=move_robot,
                         pose=pose,
                         stiffness=command_kwargs["stiffness"],
-                        wrench_feedback_gains_at_tip=command_kwargs[
-                            "wrench_feedback_gains_at_tip"
-                        ],
+                        wrench_feedback_gains_at_tip=command_kwargs["wrench_feedback_gains_at_tip"],
                     )
 
                 except TransformException as ex:
