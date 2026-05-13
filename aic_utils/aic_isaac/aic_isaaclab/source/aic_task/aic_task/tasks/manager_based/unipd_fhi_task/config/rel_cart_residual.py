@@ -59,7 +59,7 @@ class ObservationsCfg:
 
         # Minimal target port position and orientation (x, y, yaw = 3 dims)
         port_target = ObsTerm(
-            func=mdp.target_port_base,
+            func=mdp.target_port_base_heuristic,
             params={"asset_cfg": SceneEntityCfg("robot")},
         )
 
@@ -179,6 +179,8 @@ class RelCartesianOSPResidualEnv(AICTaskBaseEnv):
         self._tip_body_id, _ = self.scene["robot"].find_bodies("sfp_tip_link")
 
         # Initial inputs for heuristic
+        self._target_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
+        self._target_quat_w = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).expand(self.num_envs, 4)
         self._h_tip_pos = torch.zeros(self.num_envs, 3, device=self.device)
         self._h_tip_force_z = torch.zeros(self.num_envs, device=self.device)
         self._update_heuristic_inputs()
@@ -227,6 +229,9 @@ class RelCartesianOSPResidualEnv(AICTaskBaseEnv):
         port_quat = port_sensor.data.target_quat_w[env_ids, target_idx[env_ids]].to(dtype=torch.float32)
 
         port_pos, port_quat = self._add_noise_to_port(port_pos, port_quat)
+        
+        self._target_pos_w[env_ids] = port_pos
+        self._target_quat_w[env_ids] = port_quat
         self._heuristic.set_target(port_pos, port_quat, env_ids=env_ids)
     
     def _add_noise_to_port(self, pos: torch.Tensor, quat: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:

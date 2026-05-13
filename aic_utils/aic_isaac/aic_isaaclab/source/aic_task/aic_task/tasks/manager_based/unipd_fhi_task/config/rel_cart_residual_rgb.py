@@ -13,12 +13,12 @@ from .. import mdp
 
 
 _cam_spawn = sim_utils.PinholeCameraCfg(
-        focal_length=22.48,
-        focus_distance=0.0,
-        horizontal_aperture=20.955,
-        vertical_aperture=18.627,
-        clipping_range=(0.07, 20.0),
-    )
+    focal_length=22.48,
+    focus_distance=0.0,
+    horizontal_aperture=20.955,
+    vertical_aperture=18.627,
+    clipping_range=(0.07, 20.0),
+)
 
 @configclass
 class AICTaskSceneRGBCfg(AICTaskSceneCfg):
@@ -26,33 +26,10 @@ class AICTaskSceneRGBCfg(AICTaskSceneCfg):
     center_camera: TiledCameraCfg = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/aic_unified_robot/center_camera_optical/center_camera",
         spawn=_cam_spawn,
-        height=224,
-        width=224,
+        height=384,
+        width=384,
         data_types=["rgb"],
-        offset=TiledCameraCfg.OffsetCfg(
-            pos=(0.0, 0.0, 0.0),
-            rot=(1.0, 0.0, 0.0, 0.0),
-            convention="ros",
-        ),
-    )
-    left_camera: TiledCameraCfg = TiledCameraCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/aic_unified_robot/left_camera_optical/left_camera",
-        spawn=_cam_spawn,
-        height=224,
-        width=224,
-        data_types=["rgb"],
-        offset=TiledCameraCfg.OffsetCfg(
-            pos=(0.0, 0.0, 0.0),
-            rot=(1.0, 0.0, 0.0, 0.0),
-            convention="ros",
-        ),
-    )
-    right_camera: TiledCameraCfg = TiledCameraCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/aic_unified_robot/right_camera_optical/right_camera",
-        spawn=_cam_spawn,
-        height=224,
-        width=224,
-        data_types=["rgb"],
+        update_period=1.0 / 20.0, # 20 FPS 
         offset=TiledCameraCfg.OffsetCfg(
             pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
@@ -70,7 +47,7 @@ class ObservationsCfg:
 
         # Minimal target port position and orientation (x, y, yaw = 3 dims)
         port_target = ObsTerm(
-            func=mdp.target_port_base,
+            func=mdp.target_port_base_heuristic,
             params={"asset_cfg": SceneEntityCfg("robot")},
         )
 
@@ -94,25 +71,9 @@ class ObservationsCfg:
 
         # Camera observations
         center_rgb = ObsTerm(
-            func=mdp.image_features,
+            func=mdp.image_resnet_features,
             params={
                 "sensor_cfg": SceneEntityCfg("center_camera"),
-                "data_type": "rgb",
-                "model_name": "resnet18",
-            },
-        )
-        left_rgb = ObsTerm(
-            func=mdp.image_features,
-            params={
-                "sensor_cfg": SceneEntityCfg("left_camera"),
-                "data_type": "rgb",
-                "model_name": "resnet18",
-            },
-        )
-        right_rgb = ObsTerm(
-            func=mdp.image_features,
-            params={
-                "sensor_cfg": SceneEntityCfg("right_camera"),
                 "data_type": "rgb",
                 "model_name": "resnet18",
             },
@@ -128,6 +89,7 @@ class ObservationsCfg:
     # observation groups
     policy: PolicyCfg = PolicyCfg()
 
+
 ##
 # Env definition
 ##
@@ -140,6 +102,38 @@ class RelCartesianOSPResidualRGBEnvCfg(RelCartesianOSPResidualEnvCfg):
     # MDP settings
     scene: AICTaskSceneRGBCfg = AICTaskSceneRGBCfg(num_envs=200, env_spacing=4.0)
     observations: ObservationsCfg = ObservationsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # 240 Hz sim / render every 12 sim steps = 20 Hz render cadence
+        self.sim.render_interval = 12
+
+        # Balanced rendering for faster training
+        self.sim.render = sim_utils.RenderCfg(
+            rendering_mode="balanced",
+            antialiasing_mode="FXAA",
+            samples_per_pixel=6,
+            enable_dl_denoiser=True,
+            enable_reflections=False,
+            enable_translucency=False,
+            enable_global_illumination=True,
+            enable_shadows=True,
+            enable_ambient_occlusion=True,
+        )
+
+        # Phtorealistic rendering
+        # self.sim.render = sim_utils.RenderCfg(
+        #     rendering_mode="quality",
+        #     antialiasing_mode="DLAA",
+        #     samples_per_pixel=32,
+        #     enable_dl_denoiser=True,
+        #     enable_reflections=True,
+        #     enable_translucency=True,
+        #     enable_global_illumination=True,
+        #     enable_shadows=True,
+        #     enable_ambient_occlusion=True,
+        # )
 
 class RelCartesianOSPResidualRGBEnv(RelCartesianOSPResidualEnv):
     """RL env that combines a heuristic base command with policy residual corrections and images."""
