@@ -141,7 +141,7 @@ class VisionEmpirical(Policy):
         self._max_integrator_windup = 0.05
         self._task = None
 
-        self.policy_data_path = vision_utils.resolve_perception_data_path()
+        self.policy_data_path = Path(POLICY_DATA_PATH)
         self.get_logger().info(
             f"Using perception data path: {self.policy_data_path}"
         )
