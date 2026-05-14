@@ -49,6 +49,11 @@ from aic_perception.utils.pose_estimator import PoseEstimator
 import aic_perception_policies.vision_utils as vision_utils
 
 
+#<--- CHANGE THIS TO YOUR LOCAL PATH 
+POLICY_DATA_PATH = "aic_perception/data"
+#------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class FixedTipTransform:
     """Fixed gripper TCP to connector-tip transform."""
