@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
+from pathlib import Path
 from typing import Sequence
 
+import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 from transforms3d._gohlketransforms import quaternion_slerp
@@ -18,6 +20,7 @@ from aic_control_interfaces.msg import (
 from aic_model.policy import (
     GetObservationCallback,
     MoveRobotCallback,
+    Policy,
     SendFeedbackCallback,
 )
 from aic_model_interfaces.msg import Observation
@@ -33,12 +36,23 @@ from geometry_msgs.msg import (
     Wrench,
     WrenchStamped,
 )
+from rclpy.duration import Duration
 from rclpy.time import Time
+from sensor_msgs.msg import Image
 from std_msgs.msg import Header
-from tf2_ros import TransformException
+from tf2_ros import TransformBroadcaster, TransformException
 
+from cv_bridge import CvBridge
+
+from aic_perception.yolo_wrapper import YoloWrapper, plot_masks
+from aic_perception.utils.pose_estimator import PoseEstimator
 import aic_perception_policies.vision_utils as vision_utils
-from aic_perception_policies.VisionBase import VisionBase
+
+
+POLICY_DATA_PATH = (
+    "/home/giulio/Documents/Unipd/art-robot/aic_challenge/"
+    "ws_aic/src/aic_perception/data"
+)
 
 
 @dataclass(frozen=True)
@@ -77,7 +91,7 @@ class InsertCableState(Enum):
     FAILED = auto()
 
 
-class VisionEmpirical(VisionBase):
+class VisionEmpirical(Policy):
     """Detect the target port with vision, then run empirical insertion."""
 
     # Fixed measured gripper/tcp -> plug-tip transforms.  Do not use
@@ -97,7 +111,7 @@ class VisionEmpirical(VisionBase):
                              -0.6627472977643364, -0.6757412205316223),
         ),
     }
-    _CONTROLLED_FRAME_OFFSET_TIP = np.array([-0.00, 0.006, 0.0])
+    _CONTROLLED_FRAME_OFFSET_TIP = np.array([-0.003, 0.006, 0.0])
     _FIXED_PORT_Z_BY_CONNECTOR = {
         "sfp": 0.133476,
         "sc": 0.0165,
@@ -122,6 +136,53 @@ class VisionEmpirical(VisionBase):
     def __init__(self, parent_node):
         super().__init__(parent_node)
         self.get_logger().info("VisionEmpirical.__init__()")
+
+        self._tip_x_error_integrator = 0.0
+        self._tip_y_error_integrator = 0.0
+        self._max_integrator_windup = 0.05
+        self._task = None
+
+        self.policy_data_path = Path(POLICY_DATA_PATH)
+        self.yolo_checkpoint_path = (
+            self.policy_data_path / "weights_istances/yolo26_segment.pt"
+        )
+        self.templates_dir = self.policy_data_path / "templates"
+        self.models_dir = self.policy_data_path / "ic/models"
+        self.nic_card_ports_filename = (
+            self.policy_data_path / "nic_card_merged_transforms.json"
+        )
+        self.sc_port_filename = (
+            self.policy_data_path / "sc_port_visual_pulito.json"
+        )
+
+        self.camera_names = ["center_camera", "left_camera", "right_camera"]
+        self.camera_frames = {
+            name: f"{name}/optical" for name in self.camera_names
+        }
+        self.nic_card_port_frames = vision_utils.load_model_frames(
+            self.nic_card_ports_filename,
+        )
+        self.sc_port_frames = vision_utils.load_model_frames(
+            self.sc_port_filename,
+        )
+
+        self.pose_estimator = None
+        self.yolo = YoloWrapper(self.yolo_checkpoint_path)
+        self.get_logger().info("Loaded YoloWrapper")
+
+        self.bridge = CvBridge()
+        self.tf_broadcaster = TransformBroadcaster(self._parent_node)
+
+        self.debug_mask = True
+        self.enforce_port_zero_roll_pitch = True
+        self.correct_port_roll_ambiguity = True
+        self.mask_image_pub = {}
+        for name in self.camera_names:
+            self.mask_image_pub[name] = self._parent_node.create_publisher(
+                Image,
+                f"/pose_estimator/{name}_debug_mask_image",
+                10,
+            )
 
         self._wrist_to_tip = np.eye(4)
         self.print_insertion_loop_debug = False
@@ -214,13 +275,359 @@ class VisionEmpirical(VisionBase):
         plug_tf_stamped.transform = vision_utils.matrix_to_transform(base_tip)
         return plug_tf_stamped
 
+    def _wait_for_tf(
+        self,
+        target_frame: str,
+        source_frame: str,
+        timeout_sec: float = 10.0,
+    ) -> bool:
+        """Wait for a TF frame to become available."""
+        start = self.time_now()
+        timeout = Duration(seconds=timeout_sec)
+        attempt = 0
+        while (self.time_now() - start) < timeout:
+            try:
+                self._parent_node._tf_buffer.lookup_transform(
+                    target_frame,
+                    source_frame,
+                    Time(),
+                )
+                return True
+            except TransformException:
+                if attempt % 20 == 0:
+                    self.get_logger().info(
+                        "Waiting for transform "
+                        f"'{source_frame}' -> '{target_frame}'..."
+                    )
+                attempt += 1
+                self.sleep_for(0.1)
+        self.get_logger().error(
+            f"Transform '{source_frame}' not available after {timeout_sec}s"
+        )
+        return False
+
+    def get_camera_observations(
+        self,
+        obs_msg: Observation,
+        world_frame: str = "world",
+    ):
+        cameras = {}
+        for name, frame in self.camera_frames.items():
+            image_msg = getattr(obs_msg, name.replace("camera", "image"))
+            camera_info_msg = getattr(
+                obs_msg,
+                name.replace("camera", "camera_info"),
+            )
+            if image_msg is None or camera_info_msg is None:
+                self.get_logger().error(f"Missing data for camera '{name}'")
+                continue
+
+            intrinsics = vision_utils.load_intrinsics(camera_info_msg)
+            extrinsics = self._parent_node._tf_buffer.lookup_transform(
+                frame,
+                world_frame,
+                Time(),
+            )
+            world_camera = vision_utils.transform_to_matrix(
+                extrinsics.transform,
+            )
+            world_camera[:3, 3] = world_camera[:3, 3] * 1000.0
+
+            cameras[name] = {
+                "image": image_msg,
+                "intrinsics": intrinsics,
+                "extrinsics": {
+                    "R_w2c": world_camera[:3, :3].tolist(),
+                    "t_w2c": world_camera[:3, 3].tolist(),
+                },
+            }
+        return cameras
+
+    def compute_segmentation_masks(
+        self,
+        camera_name: str,
+        image: Image,
+        target_name=None,
+    ):
+        cv_image = self.bridge.imgmsg_to_cv2(image, desired_encoding="bgr8")
+        raw_results = self.yolo.predict(cv_image, keep_best=True)
+
+        masks = {}
+        names = {}
+        confs = {}
+        for result in raw_results:
+            class_name = result["class_name"]
+            confidence = result["confidence"]
+            class_id = result["class_id"]
+            self.get_logger().info(
+                f"[{camera_name}] YOLO result: "
+                f"{class_id} {class_name} ({confidence:.2f})"
+            )
+
+            if target_name is not None and class_name != target_name:
+                self.get_logger().warning(
+                    "Skipping YOLO result with class_name "
+                    f"{class_name} since it does not match target_name "
+                    f"{target_name}"
+                )
+                continue
+
+            if class_name is None:
+                self.get_logger().warning(
+                    "Skipping YOLO result with no class name, "
+                    f"class_id {class_id}, confidence {confidence:.2f}"
+                )
+                continue
+
+            object_model_id = vision_utils.get_object_model_id(class_name)
+            if object_model_id not in vision_utils.CLASS_NAMES_MAP.values():
+                self.get_logger().warning(
+                    "Unknown object_model_id "
+                    f"{object_model_id}, class_name {class_name} "
+                    "in YOLO results"
+                )
+                continue
+
+            if "mask" in result:
+                masks.setdefault(object_model_id, []).append(result["mask"])
+                names.setdefault(object_model_id, []).append(class_name)
+                confs.setdefault(object_model_id, []).append(confidence)
+
+        color = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        color = color.astype(np.float32) / 255.0
+
+        if self.debug_mask:
+            image_mask = plot_masks(cv_image, raw_results)
+            image_mask_msg = self.bridge.cv2_to_imgmsg(
+                image_mask,
+                encoding="bgr8",
+            )
+            image_mask_msg.header = image.header
+            self.mask_image_pub[camera_name].publish(image_mask_msg)
+
+        return {
+            "color": color,
+            "masks": masks,
+            "names": names,
+            "confs": confs,
+        }
+
+    def compute_poses(
+        self,
+        cameras,
+        camera_inputs,
+        scale_factor=1000.0,
+        mask_quality_threshold=0.5,
+        pose_quality_threshold=0.5,
+    ):
+        if self.pose_estimator is None:
+            self.pose_estimator = PoseEstimator(
+                cameras=cameras,
+                templates_dir=self.templates_dir,
+                models_dir=self.models_dir,
+            )
+            self.get_logger().info("Loaded PoseEstimator")
+
+        pose_detections = self.pose_estimator.estimate_pose(camera_inputs)
+        best_camera_name = vision_utils.get_best_camera(
+            camera_inputs,
+            quality_threshold=mask_quality_threshold,
+        )
+        best_pose = vision_utils.get_best_pose(
+            pose_detections,
+            best_camera_name=best_camera_name,
+            quality_threshold=pose_quality_threshold,
+        )
+
+        if best_pose is not None:
+            best_pose["t_m2c"] = best_pose["t_m2c"] / scale_factor
+            best_pose["T_m2c"] = vision_utils.matrix_from_Rt(
+                R=Rotation.from_matrix(best_pose["R_m2c"]).as_matrix(),
+                t=np.array(best_pose["t_m2c"]),
+            )
+            best_pose["camera_name"] = best_camera_name
+
+        return best_pose
+
+    def get_port_local_transform(
+        self,
+        target_module_name,
+        port_name: str,
+    ):
+        if "nic_card_mount" in target_module_name:
+            model_to_port = self.nic_card_port_frames[port_name]
+        elif "sc_port" in target_module_name:
+            model_to_port = self.sc_port_frames[port_name]
+        else:
+            self.get_logger().error(
+                f"Unknown target module {target_module_name} in task, "
+                "cannot retrieve model to port transform"
+            )
+            return None
+
+        return vision_utils.matrix_from_Rt(
+            R=Rotation.from_quat(model_to_port["q_ply"]).as_matrix(),
+            t=np.array(model_to_port["t_ply"]),
+        )
+
+    def apply_port_orientation_prior(self, world_port):
+        """Project the port orientation onto the known roll=pitch=0 manifold."""
+        constrained = np.array(world_port, dtype=float, copy=True)
+        yaw = np.arctan2(constrained[1, 0], constrained[0, 0])
+        constrained[:3, :3] = Rotation.from_euler("z", yaw).as_matrix()
+        return constrained
+
+    def apply_port_plug_roll_prior(self, port_transform: Transform) -> Transform:
+        if (
+            not self.enforce_port_zero_roll_pitch
+            or not self.correct_port_roll_ambiguity
+        ):
+            return port_transform
+
+        try:
+            plug_tf_stamped = self.get_current_plug_transform()
+        except (TransformException, KeyError, ValueError) as ex:
+            self.get_logger().warning(
+                "Could not check port/plug roll alignment, keeping detected "
+                f"port orientation: {ex}"
+            )
+            return port_transform
+
+        world_port = vision_utils.transform_to_matrix(port_transform)
+        world_plug = vision_utils.transform_to_matrix(plug_tf_stamped)
+        world_port_rotation = world_port[:3, :3]
+        world_plug_rotation = world_plug[:3, :3]
+        raw_port_to_plug_rpy_deg = Rotation.from_matrix(
+            world_port_rotation.T @ world_plug_rotation,
+        ).as_euler("xyz", degrees=True)
+
+        roll_candidates = (180.0,)
+        candidate_results = []
+        for roll_offset_deg in roll_candidates:
+            candidate = np.array(world_port, dtype=float, copy=True)
+            candidate[:3, :3] = (
+                world_port_rotation
+                @ Rotation.from_euler(
+                    "x",
+                    roll_offset_deg,
+                    degrees=True,
+                ).as_matrix()
+            )
+            rotation_to_candidate_deg = np.degrees(
+                Rotation.from_matrix(
+                    candidate[:3, :3] @ world_plug_rotation.T,
+                ).magnitude()
+            )
+            candidate_results.append(
+                (rotation_to_candidate_deg, roll_offset_deg, candidate),
+            )
+
+        rotation_to_target_deg, roll_offset_deg, world_port_aligned = min(
+            candidate_results,
+            key=lambda result: result[0],
+        )
+        candidate_summary = ", ".join(
+            f"{candidate_roll:.0f}deg={candidate_angle:.2f}deg"
+            for candidate_angle, candidate_roll, _ in candidate_results
+        )
+
+        self.get_logger().info(
+            "[Perception] Port/plug roll alignment: "
+            f"raw droll={raw_port_to_plug_rpy_deg[0]:.2f} deg, "
+            f"dpitch={raw_port_to_plug_rpy_deg[1]:.2f} deg, "
+            f"dyaw={raw_port_to_plug_rpy_deg[2]:.2f} deg; "
+            f"selected local roll offset={roll_offset_deg:.0f} deg "
+            f"(rotation-to-plug {rotation_to_target_deg:.2f} deg; "
+            f"candidates: {candidate_summary})"
+        )
+        return vision_utils.matrix_to_transform(world_port_aligned)
+
+    def compute_port_transform(
+        self,
+        T_camera_model,
+        T_world_camera,
+        T_model_to_port=None,
+    ):
+        world_model = T_world_camera @ T_camera_model
+        if T_model_to_port is not None:
+            world_model = world_model @ T_model_to_port
+
+        if self.enforce_port_zero_roll_pitch:
+            world_model = self.apply_port_orientation_prior(world_model)
+
+        return vision_utils.matrix_to_transform(world_model)
+
+    def log_port_detection_error(
+        self,
+        task: Task,
+        detected_port_transform: Transform,
+    ) -> None:
+        ground_truth_port_frame = (
+            f"task_board/{task.target_module_name}/{task.port_name}_link"
+        )
+        try:
+            ground_truth_port_tf = self._parent_node._tf_buffer.lookup_transform(
+                self.world_frame,
+                ground_truth_port_frame,
+                Time(),
+            )
+        except TransformException:
+            return
+
+        world_detected = vision_utils.transform_to_matrix(
+            detected_port_transform,
+        )
+        world_ground_truth = vision_utils.transform_to_matrix(
+            ground_truth_port_tf,
+        )
+
+        position_error = world_detected[:3, 3] - world_ground_truth[:3, 3]
+        position_error_mm = 1000.0 * position_error
+        position_error_norm_mm = 1000.0 * np.linalg.norm(position_error)
+
+        rotation_error = (
+            world_detected[:3, :3] @ world_ground_truth[:3, :3].T
+        )
+        rotation_error_rpy_deg = Rotation.from_matrix(
+            rotation_error,
+        ).as_euler("xyz", degrees=True)
+        angle_error_deg = np.degrees(
+            Rotation.from_matrix(rotation_error).magnitude(),
+        )
+
+        self.get_logger().info(
+            "\n[Perception] Port detection error vs ground truth "
+            f"{ground_truth_port_frame}: "
+            f"dx={position_error_mm[0]:.1f} mm, "
+            f"dy={position_error_mm[1]:.1f} mm, "
+            f"dz={position_error_mm[2]:.1f} mm, "
+            f"|dpos|={position_error_norm_mm:.1f} mm, "
+            f"dangle={angle_error_deg:.2f} deg, "
+            f"droll={rotation_error_rpy_deg[0]:.2f} deg, "
+            f"dpitch={rotation_error_rpy_deg[1]:.2f} deg, "
+            f"dyaw={rotation_error_rpy_deg[2]:.2f} deg"
+        )
+
+    def publish_debug_tf(
+        self,
+        transform: Transform,
+        frame_id: str,
+        child_frame_id: str,
+    ) -> None:
+        tf_stamped = TransformStamped()
+        tf_stamped.header.stamp = self.time_now().to_msg()
+        tf_stamped.header.frame_id = frame_id
+        tf_stamped.child_frame_id = child_frame_id
+        tf_stamped.transform = transform
+        self.tf_broadcaster.sendTransform(tf_stamped)
+
     def _detect_port_transform(
         self,
         task: Task,
         get_observation: GetObservationCallback,
         move_robot: MoveRobotCallback,
     ) -> Transform | None:
-        """Run the VisionBase perception stack until a port pose is found."""
+        """Run the vision perception stack until a port pose is found."""
         self.world_frame = "base_link"
         for frame in self.camera_frames.values():
             if not self._wait_for_tf(self.world_frame, frame):
