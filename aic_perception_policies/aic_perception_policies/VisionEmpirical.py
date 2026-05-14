@@ -49,12 +49,6 @@ from aic_perception.utils.pose_estimator import PoseEstimator
 import aic_perception_policies.vision_utils as vision_utils
 
 
-POLICY_DATA_PATH = (
-    "/home/giulio/Documents/Unipd/art-robot/aic_challenge/"
-    "ws_aic/src/aic_perception/data"
-)
-
-
 @dataclass(frozen=True)
 class FixedTipTransform:
     """Fixed gripper TCP to connector-tip transform."""
@@ -111,7 +105,7 @@ class VisionEmpirical(Policy):
                              -0.6627472977643364, -0.6757412205316223),
         ),
     }
-    _CONTROLLED_FRAME_OFFSET_TIP = np.array([-0.003, 0.006, 0.0])
+    _CONTROLLED_FRAME_OFFSET_TIP = np.array([-0.00, 0.006, 0.0])
     _FIXED_PORT_Z_BY_CONNECTOR = {
         "sfp": 0.133476,
         "sc": 0.0165,
@@ -142,7 +136,10 @@ class VisionEmpirical(Policy):
         self._max_integrator_windup = 0.05
         self._task = None
 
-        self.policy_data_path = Path(POLICY_DATA_PATH)
+        self.policy_data_path = vision_utils.resolve_perception_data_path()
+        self.get_logger().info(
+            f"Using perception data path: {self.policy_data_path}"
+        )
         self.yolo_checkpoint_path = (
             self.policy_data_path / "weights_istances/yolo26_segment.pt"
         )
@@ -561,6 +558,7 @@ class VisionEmpirical(Policy):
         self,
         task: Task,
         detected_port_transform: Transform,
+        camera_name: str | None = None,
     ) -> None:
         ground_truth_port_frame = (
             f"task_board/{task.target_module_name}/{task.port_name}_link"
@@ -607,6 +605,160 @@ class VisionEmpirical(Policy):
             f"dpitch={rotation_error_rpy_deg[1]:.2f} deg, "
             f"dyaw={rotation_error_rpy_deg[2]:.2f} deg"
         )
+
+        self.append_port_detection_error_log(
+            task=task,
+            camera_name=camera_name,
+            detected_port_transform=detected_port_transform,
+            ground_truth_port_tf=ground_truth_port_tf,
+            position_error_mm=position_error_mm,
+            position_error_norm_mm=position_error_norm_mm,
+            angle_error_deg=angle_error_deg,
+            rotation_error_rpy_deg=rotation_error_rpy_deg,
+        )
+
+    def _perception_error_log_path(self, task: Task) -> Path:
+        task_id = str(task.id).strip() or "unknown_task"
+        safe_task_id = "".join(
+            char if char.isalnum() or char in ("-", "_") else "_"
+            for char in task_id
+        )
+        log_dir = Path.home() / "aic_results"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        return log_dir / f"{safe_task_id}.txt"
+
+    @staticmethod
+    def _pose_components(transform: Transform | TransformStamped) -> list[float]:
+        matrix = vision_utils.transform_to_matrix(transform)
+        translation = matrix[:3, 3]
+        quaternion = Rotation.from_matrix(matrix[:3, :3]).as_quat()
+        rpy_deg = Rotation.from_matrix(matrix[:3, :3]).as_euler(
+            "xyz",
+            degrees=True,
+        )
+        return [
+            *translation.tolist(),
+            *quaternion.tolist(),
+            *rpy_deg.tolist(),
+        ]
+
+    def append_port_detection_error_log(
+        self,
+        task: Task,
+        camera_name: str | None,
+        detected_port_transform: Transform,
+        ground_truth_port_tf: TransformStamped,
+        position_error_mm: np.ndarray,
+        position_error_norm_mm: float,
+        angle_error_deg: float,
+        rotation_error_rpy_deg: np.ndarray,
+    ) -> None:
+        try:
+            board_tf = self._parent_node._tf_buffer.lookup_transform(
+                self.world_frame,
+                "task_board",
+                Time(),
+            )
+            board_frame = "task_board"
+            board_pose = self._pose_components(board_tf)
+        except TransformException as ex:
+            self.get_logger().warning(
+                f"Could not log task board pose in {self.world_frame}: {ex}"
+            )
+            board_frame = "task_board_unavailable"
+            board_pose = [float("nan")] * 10
+
+        header = [
+            "timestamp_ns",
+            "task_id",
+            "camera_name",
+            "world_frame",
+            "target_module_name",
+            "port_name",
+            "detected_x_m",
+            "detected_y_m",
+            "detected_z_m",
+            "detected_qx",
+            "detected_qy",
+            "detected_qz",
+            "detected_qw",
+            "detected_roll_deg",
+            "detected_pitch_deg",
+            "detected_yaw_deg",
+            "gt_x_m",
+            "gt_y_m",
+            "gt_z_m",
+            "gt_qx",
+            "gt_qy",
+            "gt_qz",
+            "gt_qw",
+            "gt_roll_deg",
+            "gt_pitch_deg",
+            "gt_yaw_deg",
+            "error_x_mm",
+            "error_y_mm",
+            "error_z_mm",
+            "error_norm_mm",
+            "error_angle_deg",
+            "error_roll_deg",
+            "error_pitch_deg",
+            "error_yaw_deg",
+            "board_frame",
+            "board_x_m",
+            "board_y_m",
+            "board_z_m",
+            "board_qx",
+            "board_qy",
+            "board_qz",
+            "board_qw",
+            "board_roll_deg",
+            "board_pitch_deg",
+            "board_yaw_deg",
+        ]
+
+        row = [
+            str(self.time_now().nanoseconds),
+            str(task.id),
+            camera_name or "",
+            self.world_frame,
+            str(task.target_module_name),
+            str(task.port_name),
+            *self._pose_components(detected_port_transform),
+            *self._pose_components(ground_truth_port_tf),
+            *position_error_mm.tolist(),
+            float(position_error_norm_mm),
+            float(angle_error_deg),
+            *rotation_error_rpy_deg.tolist(),
+            board_frame,
+            *board_pose,
+        ]
+
+        try:
+            log_path = self._perception_error_log_path(task)
+            file_needs_header = (
+                not log_path.exists()
+                or log_path.stat().st_size == 0
+            )
+            with log_path.open("a", encoding="utf-8") as log_file:
+                if file_needs_header:
+                    log_file.write(",".join(header) + "\n")
+                log_file.write(
+                    ",".join(
+                        self._format_log_value(value)
+                        for value in row
+                    )
+                )
+                log_file.write("\n")
+        except OSError as ex:
+            self.get_logger().warning(
+                f"Failed to append perception error log: {ex}"
+            )
+
+    @staticmethod
+    def _format_log_value(value) -> str:
+        if isinstance(value, float):
+            return f"{value:.9g}"
+        return str(value)
 
     def publish_debug_tf(
         self,
@@ -714,7 +866,11 @@ class VisionEmpirical(Policy):
             frame_id=self.world_frame,
             child_frame_id=f"{camera_name}_{task.port_name}_link",
         )
-        self.log_port_detection_error(task, port_transform)
+        self.log_port_detection_error(
+            task,
+            port_transform,
+            camera_name=camera_name,
+        )
         return port_transform
 
     def _compute_wrist_to_tip_matrix(self, task: Task) -> np.ndarray:
@@ -1051,6 +1207,71 @@ class VisionEmpirical(Policy):
             ),
         )
 
+    def _move_sc_to_vision_target(
+        self,
+        port_transform: Transform,
+        gripper_tip_transform: Transform,
+        move_robot: MoveRobotCallback,
+    ) -> bool:
+        """Run the CheatCode-style motion using the vision-derived port pose."""
+        z_offset = 0.2
+        cheatcode_stiffness = [200.0, 200.0, 200.0, 50.0, 50.0, 50.0]
+        cheatcode_damping = [100.0, 100.0, 100.0, 40.0, 40.0, 40.0]
+        cheatcode_wrench_feedback = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self.get_logger().info(
+            "SC plug detected; moving directly to the vision target."
+        )
+
+        for step in range(100):
+            interpolation_fraction = step / 100.0
+            try:
+                pose = self.calc_gripper_pose(
+                    port_transform,
+                    gripper_tip_transform,
+                    slerp_fraction=interpolation_fraction,
+                    position_fraction=interpolation_fraction,
+                    z_offset=z_offset,
+                    reset_xy_integrator=True,
+                )
+                self.set_pose_target(
+                    move_robot=move_robot,
+                    pose=pose,
+                    stiffness=cheatcode_stiffness,
+                    damping=cheatcode_damping,
+                    wrench_feedback_gains_at_tip=cheatcode_wrench_feedback,
+                )
+            except TransformException as ex:
+                self.get_logger().warning(
+                    "TF lookup failed during SC interpolation: "
+                    f"{ex}"
+                )
+            self.sleep_for(0.05)
+
+        while z_offset >= -0.015:
+            z_offset -= 0.0005
+            try:
+                pose = self.calc_gripper_pose(
+                    port_transform,
+                    gripper_tip_transform,
+                    z_offset=z_offset,
+                )
+                self.set_pose_target(
+                    move_robot=move_robot,
+                    pose=pose,
+                    stiffness=cheatcode_stiffness,
+                    damping=cheatcode_damping,
+                    wrench_feedback_gains_at_tip=cheatcode_wrench_feedback,
+                )
+            except TransformException as ex:
+                self.get_logger().warning(
+                    f"TF lookup failed during SC descent: {ex}"
+                )
+            self.sleep_for(0.05)
+
+        self.get_logger().info("Waiting for SC connector to stabilize.")
+        self.sleep_for(5.0)
+        return True
+
     def insert_cable(
         self,
         task: Task,
@@ -1162,6 +1383,18 @@ class VisionEmpirical(Policy):
                     "Using fixed gripper/tcp -> plug-tip transform "
                     f"for {connector_key}."
                 )
+                if connector_key == "sc":
+                    state = (
+                        InsertCableState.DONE
+                        if self._move_sc_to_vision_target(
+                            port_transform,
+                            gripper_tip_transform,
+                            move_robot,
+                        )
+                        else InsertCableState.FAILED
+                    )
+                    continue
+
                 move_above_step = 0
                 tip_initialized = True
                 state = InsertCableState.MOVE_ABOVE_PORT
