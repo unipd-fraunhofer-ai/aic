@@ -95,10 +95,23 @@ class ObservationsCfg:
 
         def __post_init__(self):
             self.enable_corruption = False
-            self.concatenate_terms = True # Total obs dim = 3 + 12 + 6 + 6 = 27
+            self.concatenate_terms = True # Total obs dim = 3 + 12 + 6 + 12 = 33
+
+    @configclass
+    class CriticCfg(PolicyCfg):
+        """Observations for critic: same as policy + ground-truth target port position and orientation (x, y, yaw)."""
+        port_target_gt = ObsTerm(
+            func=mdp.target_port_base,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+        )
+        
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True # Total obs dim = 33 + 3 = 36
 
     # observation groups
     policy: PolicyCfg = PolicyCfg()
+    critic: CriticCfg = CriticCfg()
 
 @configclass
 class EventCfg:
@@ -156,6 +169,10 @@ class RelCartesianOSPResidualEnvCfg(AICTaskBaseEnvCfg):
     observations: ObservationsCfg = ObservationsCfg()
     events: EventCfg = EventCfg()
 
+    obs_groups = {
+        "policy": observations.policy,
+        "critic": observations.critic,
+    }
 
 class RelCartesianOSPResidualEnv(AICTaskBaseEnv):
     """RL env that combines a heuristic base command with policy residual corrections."""
