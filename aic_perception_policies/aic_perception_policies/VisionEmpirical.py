@@ -97,7 +97,7 @@ class VisionEmpirical(VisionBase):
                              -0.6627472977643364, -0.6757412205316223),
         ),
     }
-    _CONTROLLED_FRAME_OFFSET_TIP = np.array([-0.006, 0.006, 0.0])
+    _CONTROLLED_FRAME_OFFSET_TIP = np.array([-0.00, 0.006, 0.0])
     _FIXED_PORT_Z_BY_CONNECTOR = {
         "sfp": 0.133476,
         "sc": 0.0165,
