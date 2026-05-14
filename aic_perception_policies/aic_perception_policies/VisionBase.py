@@ -38,7 +38,7 @@ import aic_perception_policies.vision_utils as vision_utils
 QuaternionTuple = tuple[float, float, float, float]
 
 #<--- CHANGE THIS TO YOUR LOCAL PATH 
-POLICY_DATA_PATH = "/home/iaslab/ros2_ws/torch_ws/src/aic_perception/data"
+POLICY_DATA_PATH = "aic_perception/data"
 #------------------------------------------------------------
 
 class VisionBase(Policy):
