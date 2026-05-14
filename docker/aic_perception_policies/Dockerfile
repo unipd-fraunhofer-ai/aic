@@ -17,6 +17,9 @@ COPY pixi_env_setup.sh /ws_aic/src/aic/
 COPY aic_perception /ws_aic/src/aic/aic_perception
 COPY aic_perception_policies /ws_aic/src/aic/aic_perception_policies
 
+# Add torch models
+COPY /home/$USER/.cache/torch /root/.cache/torch
+
 SHELL ["/bin/bash", "-c"]
 RUN --mount=type=cache,target=/root/.cache/rattler/cache --mount=type=cache,target=/ws_aic/src/aic/.pixi/build \
     cd /ws_aic/src/aic && pixi install --locked
