@@ -97,7 +97,11 @@ class VisionEmpirical(VisionBase):
                              -0.6627472977643364, -0.6757412205316223),
         ),
     }
-    _CONTROLLED_FRAME_OFFSET_TIP = np.array([-0.007, 0.007, 0.0])
+    _CONTROLLED_FRAME_OFFSET_TIP = np.array([-0.006, 0.006, 0.0])
+    _FIXED_PORT_Z_BY_CONNECTOR = {
+        "sfp": 0.133476,
+        "sc": 0.0165,
+    }
     _STARTING_JOINT_NAMES = (
         "shoulder_pan_joint",
         "shoulder_lift_joint",
@@ -167,6 +171,21 @@ class VisionEmpirical(VisionBase):
     def _fixed_gripper_tip_matrix(self, task: Task | None = None) -> np.ndarray:
         connector_key = self._connector_key(task)
         return self._FIXED_TIP_TRANSFORMS[connector_key].as_matrix()
+
+    def _fixed_port_z(self, task: Task) -> float:
+        port_type = str(task.port_type).strip().lower()
+        if port_type in self._FIXED_PORT_Z_BY_CONNECTOR:
+            return self._FIXED_PORT_Z_BY_CONNECTOR[port_type]
+
+        port_name = str(task.port_name).strip().lower()
+        for connector_key, port_z in self._FIXED_PORT_Z_BY_CONNECTOR.items():
+            if port_name.startswith(connector_key):
+                return port_z
+
+        raise KeyError(
+            "No fixed port height configured for "
+            f"port_type={task.port_type!r}, port_name={task.port_name!r}."
+        )
 
     def get_current_plug_transform(
         self,
@@ -281,6 +300,7 @@ class VisionEmpirical(VisionBase):
             T_model_to_port=model_to_port,
         )
         port_transform = self.apply_port_plug_roll_prior(port_transform)
+        port_transform.translation.z = self._fixed_port_z(task)
 
         self.publish_debug_tf(
             port_transform,
