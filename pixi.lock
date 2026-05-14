@@ -419,6 +419,7 @@ environments:
       - conda: https://conda.anaconda.org/robostack-kilted/linux-64/ros-kilted-composition-interfaces-2.3.1-np2py312h2ed9cc7_17.conda
       - conda: https://conda.anaconda.org/robostack-kilted/linux-64/ros-kilted-console-bridge-vendor-1.8.0-np2py312h2ed9cc7_17.conda
       - conda: https://conda.anaconda.org/robostack-kilted/linux-64/ros-kilted-control-msgs-6.8.0-np2py312h2ed9cc7_17.conda
+      - conda: https://conda.anaconda.org/robostack-kilted/linux-64/ros-kilted-cv-bridge-4.1.0-np2py312h3b5449b_17.conda
       - conda: https://conda.anaconda.org/robostack-kilted/linux-64/ros-kilted-cyclonedds-0.10.5-np2py312h2ed9cc7_17.conda
       - conda: https://conda.anaconda.org/robostack-kilted/linux-64/ros-kilted-data-tamer-cpp-1.0.3-np2py312h2ed9cc7_17.conda
       - conda: https://conda.anaconda.org/robostack-kilted/linux-64/ros-kilted-data-tamer-msgs-1.0.3-np2py312h2ed9cc7_17.conda
@@ -7197,6 +7198,38 @@ packages:
   - pkg:pypi/control_msgs?source=project-defined-mapping
   size: 1604561
   timestamp: 1775549932462
+- conda: https://conda.anaconda.org/robostack-kilted/linux-64/ros-kilted-cv-bridge-4.1.0-np2py312h3b5449b_17.conda
+  sha256: bf0089549e03eb9f025e0882469032c76e271c4a04aebcf0b3ff1c8fe734d221
+  md5: 589d5fe5ec64028b085b739441760c4e
+  depends:
+  - libboost-python
+  - libgl-devel
+  - libopencv
+  - libopengl-devel
+  - numpy
+  - py-opencv
+  - python
+  - ros-kilted-ament-index-python
+  - ros-kilted-rclcpp
+  - ros-kilted-rcpputils
+  - ros-kilted-ros-workspace
+  - ros-kilted-sensor-msgs
+  - ros2-distro-mutex 0.14.* kilted_*
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=14
+  - libstdcxx >=14
+  - libopencv >=4.13.0,<4.13.1.0a0
+  - numpy >=1.23,<3
+  - py-opencv >=4.13.0,<5.0a0
+  - libgl >=1.7.0,<2.0a0
+  - libopengl >=1.7.0,<2.0a0
+  - ros2-distro-mutex >=0.14.0,<0.15.0a0
+  - libboost >=1.88.0,<1.89.0a0
+  - libboost-python >=1.88.0,<1.89.0a0
+  - python_abi 3.12.* *_cp312
+  license: Apache-2.0 OR BSD-3-Clause
+  size: 209858
+  timestamp: 1775551302975
 - conda: https://conda.anaconda.org/robostack-kilted/linux-64/ros-kilted-cyclonedds-0.10.5-np2py312h2ed9cc7_17.conda
   sha256: 6361bc98d6dc314c715637a61f7357c6a8af3ce2f4e1c8b9c68e39f3368191e5
   md5: d07e8e7e1e81062eedfd722ca3d892e3
