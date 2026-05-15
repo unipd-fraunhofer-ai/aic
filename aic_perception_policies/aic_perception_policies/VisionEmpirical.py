@@ -7,7 +7,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Sequence
 
-import cv2
+
 import numpy as np
 from scipy.spatial.transform import Rotation
 from transforms3d._gohlketransforms import quaternion_slerp
@@ -42,10 +42,11 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Header
 from tf2_ros import TransformBroadcaster, TransformException
 
-from cv_bridge import CvBridge
+# import cv2
+# from cv_bridge import CvBridge
 
-from aic_perception.yolo_wrapper import YoloWrapper, plot_masks
-from aic_perception.utils.pose_estimator import PoseEstimator
+# from aic_perception.yolo_wrapper import YoloWrapper, plot_masks
+# from aic_perception.utils.pose_estimator import PoseEstimator
 import aic_perception_policies.vision_utils as vision_utils
 
 
@@ -132,6 +133,16 @@ class VisionEmpirical(Policy):
         1.4110,
     )
 
+    def import_dependencies(self):
+        global cv2, CvBridge, YoloWrapper, plot_masks, PoseEstimator, vision_utils
+
+        import cv2
+        from cv_bridge import CvBridge
+        from aic_perception.yolo_wrapper import YoloWrapper, plot_masks
+        from aic_perception.utils.pose_estimator import PoseEstimator
+        import aic_perception_policies.vision_utils as vision_utils
+
+
     def __init__(self, parent_node):
         super().__init__(parent_node)
         self.get_logger().info("VisionEmpirical.__init__()")
@@ -169,9 +180,9 @@ class VisionEmpirical(Policy):
         )
 
         self.pose_estimator = None
-        self.yolo = YoloWrapper(self.yolo_checkpoint_path)
-        self.get_logger().info("Loaded YoloWrapper")
-
+        self.yolo = None
+        
+        from cv_bridge import CvBridge
         self.bridge = CvBridge()
         self.tf_broadcaster = TransformBroadcaster(self._parent_node)
 
@@ -351,6 +362,11 @@ class VisionEmpirical(Policy):
         image: Image,
         target_name=None,
     ):
+        if self.yolo is None:
+            from aic_perception.yolo_wrapper import YoloWrapper
+            self.yolo = YoloWrapper(self.yolo_checkpoint_path)
+            self.get_logger().info("Loaded YoloWrapper")
+
         cv_image = self.bridge.imgmsg_to_cv2(image, desired_encoding="bgr8")
         raw_results = self.yolo.predict(cv_image, keep_best=True)
 
@@ -395,10 +411,12 @@ class VisionEmpirical(Policy):
                 names.setdefault(object_model_id, []).append(class_name)
                 confs.setdefault(object_model_id, []).append(confidence)
 
+        import cv2
         color = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
         color = color.astype(np.float32) / 255.0
 
         if self.debug_mask:
+            from aic_perception.yolo_wrapper import plot_masks
             image_mask = plot_masks(cv_image, raw_results)
             image_mask_msg = self.bridge.cv2_to_imgmsg(
                 image_mask,
@@ -423,6 +441,7 @@ class VisionEmpirical(Policy):
         pose_quality_threshold=0.5,
     ):
         if self.pose_estimator is None:
+            from aic_perception.utils.pose_estimator import PoseEstimator
             self.pose_estimator = PoseEstimator(
                 cameras=cameras,
                 templates_dir=self.templates_dir,
